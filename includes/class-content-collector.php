@@ -791,7 +791,7 @@ class AI_Optimizer_Content_Collector {
     
     private function css_to_xpath($css_selector) {
         // 简单的CSS到XPath转换
-        $xpath = str_replace(array('.', '#'), array('[@class="', '[@id="'], $css_selector);
+        $xpath = str_replace(array('.', '#'), array('[@class="', '[@id="'), $css_selector);
         $xpath = str_replace('"', '"]', $xpath);
         return '//' . $xpath;
     }

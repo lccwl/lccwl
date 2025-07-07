@@ -49,14 +49,23 @@ class AI_Website_Optimizer {
         // AJAX
         add_action('wp_ajax_ai_opt_test_api', array($this, 'ajax_test_api'));
         add_action('wp_ajax_ai_opt_save_settings', array($this, 'ajax_save_settings'));
-        add_action('wp_ajax_ai_opt_run_analysis', array($this, 'ajax_run_analysis'));
+        add_action('wp_ajax_ai_opt_run_seo_analysis', array($this, 'ajax_run_seo_analysis'));
+        add_action('wp_ajax_ai_opt_apply_seo_optimization', array($this, 'ajax_apply_seo_optimization'));
+        add_action('wp_ajax_ai_opt_run_patrol_check', array($this, 'ajax_run_patrol_check'));
+        add_action('wp_ajax_ai_opt_get_patrol_history', array($this, 'ajax_get_patrol_history'));
+        add_action('wp_ajax_ai_opt_update_patrol_settings', array($this, 'ajax_update_patrol_settings'));
         add_action('wp_ajax_ai_opt_generate_content', array($this, 'ajax_generate_content'));
-        add_action('wp_ajax_ai_opt_activate_license', array($this, 'ajax_activate_license'));
-        add_action('wp_ajax_ai_opt_deactivate_license', array($this, 'ajax_deactivate_license'));
         add_action('wp_ajax_ai_opt_check_video_status', array($this, 'ajax_check_video_status'));
         add_action('wp_ajax_ai_opt_publish_to_wordpress', array($this, 'ajax_publish_to_wordpress'));
         add_action('wp_ajax_ai_opt_save_auto_settings', array($this, 'ajax_save_auto_settings'));
         add_action('wp_ajax_ai_opt_get_monitor_logs', array($this, 'ajax_get_monitor_logs'));
+        
+        // 新增的AJAX处理函数
+        add_action('wp_ajax_ai_opt_run_seo_analysis', array($this, 'ajax_run_seo_analysis'));
+        add_action('wp_ajax_ai_opt_apply_seo_optimization', array($this, 'ajax_apply_seo_optimization'));
+        add_action('wp_ajax_ai_opt_run_patrol_check', array($this, 'ajax_run_patrol_check'));
+        add_action('wp_ajax_ai_opt_get_patrol_history', array($this, 'ajax_get_patrol_history'));
+        add_action('wp_ajax_ai_opt_update_patrol_settings', array($this, 'ajax_update_patrol_settings'));
     }
     
     private function load_dependencies() {
@@ -65,9 +74,23 @@ class AI_Website_Optimizer {
             require_once AI_OPT_PLUGIN_PATH . 'includes/class-utils.php';
         }
         
-        // 加载授权管理类
-        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-license-manager.php')) {
-            require_once AI_OPT_PLUGIN_PATH . 'includes/class-license-manager.php';
+        // 加载SEO分析器
+        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-seo-analyzer.php')) {
+            require_once AI_OPT_PLUGIN_PATH . 'includes/class-seo-analyzer.php';
+        }
+        
+        // 加载AI巡逻系统
+        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-ai-patrol-system.php')) {
+            require_once AI_OPT_PLUGIN_PATH . 'includes/class-ai-patrol-system.php';
+        }
+        
+        // 加载其他必要的类
+        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-api-handler.php')) {
+            require_once AI_OPT_PLUGIN_PATH . 'includes/class-api-handler.php';
+        }
+        
+        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-database.php')) {
+            require_once AI_OPT_PLUGIN_PATH . 'includes/class-database.php';
         }
     }
     
@@ -93,7 +116,7 @@ class AI_Website_Optimizer {
         add_submenu_page('ai-optimizer', 'SEO优化', 'SEO优化', 'manage_options', 'ai-optimizer-seo', array($this, 'render_seo'));
         add_submenu_page('ai-optimizer', 'AI工具', 'AI工具', 'manage_options', 'ai-optimizer-tools', array($this, 'render_tools'));
         add_submenu_page('ai-optimizer', '插件设置', '插件设置', 'manage_options', 'ai-optimizer-settings', array($this, 'render_settings'));
-        add_submenu_page('ai-optimizer', '授权管理', '授权管理', 'manage_options', 'ai-optimizer-license', array($this, 'render_license'));
+
     }
     
     public function enqueue_admin_assets($hook) {
@@ -632,7 +655,179 @@ class AI_Website_Optimizer {
     public function render_monitor() {
         ?>
         <div class="wrap ai-optimizer-wrap">
-            <h1>实时监控日志</h1>
+            <h1>🤖 AI智能巡逻系统</h1>
+            
+            <!-- 巡逻控制面板 -->
+            <div class="ai-optimizer-card">
+                <h2>🎯 AI巡逻控制面板</h2>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><label for="patrol_ai_model">AI模型选择</label></th>
+                        <td>
+                            <select id="patrol_ai_model" name="patrol_ai_model" class="regular-text">
+                                <option value="Qwen/QwQ-32B-Preview">Qwen/QwQ-32B (深度分析推荐)</option>
+                                <option value="Qwen/Qwen2.5-72B-Instruct">Qwen/Qwen2.5-72B (快速分析)</option>
+                                <option value="meta-llama/Meta-Llama-3.1-405B-Instruct">Meta-Llama-3.1-405B (专业版)</option>
+                                <option value="deepseek-ai/DeepSeek-V2.5">DeepSeek-V2.5 (技术优化)</option>
+                            </select>
+                            <p class="description">选择AI模型进行系统分析，不同模型有不同的分析深度和专业领域</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">巡逻设置</th>
+                        <td>
+                            <fieldset>
+                                <label><input type="checkbox" id="patrol_enabled" checked> 启用AI自动巡逻</label><br>
+                                <label><input type="checkbox" id="monitor_database" checked> 监控数据库健康状态</label><br>
+                                <label><input type="checkbox" id="monitor_code" checked> 监控代码质量和安全</label><br>
+                                <label><input type="checkbox" id="monitor_performance" checked> 监控系统性能</label><br>
+                                <label><input type="checkbox" id="monitor_security" checked> 监控安全状态</label><br>
+                                <label><input type="checkbox" id="patrol_auto_fix" checked> 启用自动修复</label>
+                            </fieldset>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">巡逻频率</th>
+                        <td>
+                            <select id="patrol_interval" class="regular-text">
+                                <option value="hourly">每小时一次</option>
+                                <option value="twicedaily">每天两次</option>
+                                <option value="daily">每天一次</option>
+                                <option value="weekly">每周一次</option>
+                            </select>
+                            <p class="description">设置自动巡逻的执行频率</p>
+                        </td>
+                    </tr>
+                </table>
+                
+                <p class="submit">
+                    <button type="button" class="button button-primary" id="run-patrol-check">🚀 立即执行AI巡逻</button>
+                    <button type="button" class="button button-secondary" id="save-patrol-settings">💾 保存巡逻设置</button>
+                    <button type="button" class="button button-secondary" id="view-patrol-history">📊 查看巡逻历史</button>
+                    <span id="patrol-status" style="margin-left: 15px; font-weight: bold; color: #165DFF;"></span>
+                </p>
+            </div>
+            
+            <!-- 巡逻进度显示 -->
+            <div id="patrol-progress" class="ai-optimizer-card" style="display: none;">
+                <h2>🔄 AI巡逻进度</h2>
+                <div class="progress-container" style="background: #f0f0f0; border-radius: 10px; padding: 20px;">
+                    <div id="patrol-progress-steps">
+                        <div class="progress-step" id="patrol-step-1">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">正在扫描数据库状态...</span>
+                        </div>
+                        <div class="progress-step" id="patrol-step-2">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">正在分析代码质量...</span>
+                        </div>
+                        <div class="progress-step" id="patrol-step-3">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">正在检查系统性能...</span>
+                        </div>
+                        <div class="progress-step" id="patrol-step-4">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">正在进行安全扫描...</span>
+                        </div>
+                        <div class="progress-step" id="patrol-step-5">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">AI正在深度分析结果...</span>
+                        </div>
+                        <div class="progress-step" id="patrol-step-6">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">生成优化建议和修复方案...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 巡逻结果显示 -->
+            <div id="patrol-results" class="ai-optimizer-card" style="display: none;">
+                <h2>📋 AI巡逻报告</h2>
+                
+                <!-- 系统健康度总览 -->
+                <div class="system-health-overview" style="background: linear-gradient(135deg, #165DFF 0%, #7E22CE 100%); color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <h3 style="margin: 0; font-size: 18px;">系统整体健康度</h3>
+                            <p style="margin: 5px 0 0 0; opacity: 0.9;">基于AI深度分析的综合评估</p>
+                        </div>
+                        <div style="text-align: center;">
+                            <div id="system-health-score" style="font-size: 48px; font-weight: bold;">--</div>
+                            <div style="font-size: 14px; opacity: 0.9;">健康度评分</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 各项检查结果 -->
+                <div class="patrol-details" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                    <div class="detail-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #165DFF;">
+                        <h4 style="margin-top: 0; color: #165DFF;">🗄️ 数据库状态</h4>
+                        <div id="database-patrol-details">正在分析...</div>
+                    </div>
+                    <div class="detail-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #00F5D4;">
+                        <h4 style="margin-top: 0; color: #00F5D4;">💻 代码质量</h4>
+                        <div id="code-patrol-details">正在分析...</div>
+                    </div>
+                    <div class="detail-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #7E22CE;">
+                        <h4 style="margin-top: 0; color: #7E22CE;">⚡ 系统性能</h4>
+                        <div id="performance-patrol-details">正在分析...</div>
+                    </div>
+                    <div class="detail-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #ff6b35;">
+                        <h4 style="margin-top: 0; color: #ff6b35;">🔒 安全状态</h4>
+                        <div id="security-patrol-details">正在分析...</div>
+                    </div>
+                </div>
+                
+                <!-- AI分析建议 -->
+                <div class="ai-analysis-section">
+                    <h3>🤖 AI深度分析建议</h3>
+                    <div id="ai-analysis-content" style="background: #fff; border: 1px solid #e1e5e9; border-radius: 8px; padding: 20px; white-space: pre-wrap; line-height: 1.6;">
+                        AI分析结果将在此显示...
+                    </div>
+                </div>
+                
+                <!-- 自动修复建议 -->
+                <div id="auto-fix-section" style="margin-top: 20px; display: none;">
+                    <h3>🛠️ 可自动修复的问题</h3>
+                    <div id="auto-fix-list" style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <ul id="fixable-issues-list"></ul>
+                        <p class="submit">
+                            <button type="button" class="button button-primary" id="apply-auto-fixes">⚡ 应用自动修复</button>
+                            <span id="fix-status" style="margin-left: 15px; font-weight: bold;"></span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 巡逻历史记录 -->
+            <div id="patrol-history" class="ai-optimizer-card" style="display: none;">
+                <h2>📈 巡逻历史记录</h2>
+                <div id="history-patrol-content">
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th>巡逻时间</th>
+                                <th>健康度评分</th>
+                                <th>发现问题</th>
+                                <th>关键问题</th>
+                                <th>使用模型</th>
+                                <th>执行时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="patrol-history-table-body">
+                            <tr>
+                                <td colspan="7" style="text-align: center; padding: 20px; color: #666;">
+                                    暂无巡逻记录，请先运行一次AI巡逻
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <h1>实时系统日志</h1>
             
             <div class="ai-optimizer-card">
                 <h2>📋 实时日志监控</h2>
@@ -828,44 +1023,360 @@ class AI_Website_Optimizer {
     public function render_seo() {
         ?>
         <div class="wrap ai-optimizer-wrap">
-            <h1>SEO优化</h1>
+            <h1>🚀 AI智能SEO优化分析</h1>
             
+            <!-- SEO分析控制面板 -->
             <div class="ai-optimizer-card">
-                <h2>SEO分析报告</h2>
+                <h2>🎯 AI分析控制面板</h2>
                 <table class="form-table">
                     <tr>
-                        <th>页面标题</th>
-                        <td><span style="color: green;">✓</span> 优化良好</td>
+                        <th scope="row"><label for="seo_ai_model">AI模型选择</label></th>
+                        <td>
+                            <select id="seo_ai_model" name="seo_ai_model" class="regular-text">
+                                <option value="Qwen/QwQ-32B-Preview">Qwen/QwQ-32B (深度分析推荐)</option>
+                                <option value="Qwen/Qwen2.5-72B-Instruct">Qwen/Qwen2.5-72B (快速分析)</option>
+                                <option value="meta-llama/Meta-Llama-3.1-405B-Instruct">Meta-Llama-3.1-405B (专业版)</option>
+                                <option value="deepseek-ai/DeepSeek-V2.5">DeepSeek-V2.5 (技术优化)</option>
+                            </select>
+                            <p class="description">选择不同的AI模型进行SEO分析，推荐使用QwQ-32B获得最佳分析效果</p>
+                        </td>
                     </tr>
                     <tr>
-                        <th>Meta描述</th>
-                        <td><span style="color: orange;">!</span> 需要改进</td>
+                        <th scope="row">分析范围</th>
+                        <td>
+                            <fieldset>
+                                <label><input type="checkbox" id="analyze_technical" checked> 技术SEO分析（SSL、sitemap、robots.txt等）</label><br>
+                                <label><input type="checkbox" id="analyze_content" checked> 内容质量分析（关键词、结构等）</label><br>
+                                <label><input type="checkbox" id="analyze_performance" checked> 性能优化分析（加载速度、移动端等）</label><br>
+                                <label><input type="checkbox" id="analyze_competitors" checked> 竞争对手分析（可选）</label><br>
+                                <label><input type="checkbox" id="search_latest_seo" checked> 实时搜索最新SEO知识</label>
+                            </fieldset>
+                        </td>
                     </tr>
                     <tr>
-                        <th>关键词密度</th>
-                        <td><span style="color: green;">✓</span> 2.5% (理想范围)</td>
-                    </tr>
-                    <tr>
-                        <th>图片Alt标签</th>
-                        <td><span style="color: red;">✗</span> 12个图片缺少Alt标签</td>
+                        <th scope="row">优化策略</th>
+                        <td>
+                            <select id="optimization_strategy" class="regular-text">
+                                <option value="baidu_focused">百度蜘蛛优化（提升百度收录和排名）</option>
+                                <option value="google_focused">Google SEO优化</option>
+                                <option value="comprehensive">综合搜索引擎优化</option>
+                                <option value="local_seo">本地SEO优化</option>
+                            </select>
+                            <p class="description">选择优化策略，系统将针对性地提供最佳建议</p>
+                        </td>
                     </tr>
                 </table>
                 
-                <p>
-                    <button class="button button-primary" id="run-seo-analysis">运行AI分析</button>
+                <p class="submit">
+                    <button type="button" class="button button-primary" id="start-ai-seo-analysis">🚀 开始AI深度分析</button>
+                    <button type="button" class="button button-secondary" id="get-analysis-history">📊 查看历史分析</button>
+                    <span id="seo-analysis-status" style="margin-left: 15px; font-weight: bold; color: #165DFF;"></span>
                 </p>
             </div>
             
-            <div class="ai-optimizer-card">
-                <h2>优化建议</h2>
-                <ol>
-                    <li>添加更多长尾关键词到内容中</li>
-                    <li>优化页面加载速度，当前为2.3秒</li>
-                    <li>增加内部链接，提高页面相关性</li>
-                    <li>更新Meta描述，包含主要关键词</li>
-                </ol>
+            <!-- 实时分析进度 -->
+            <div id="analysis-progress" class="ai-optimizer-card" style="display: none;">
+                <h2>🔄 实时分析进度</h2>
+                <div class="progress-container" style="background: #f0f0f0; border-radius: 10px; padding: 20px;">
+                    <div id="progress-steps">
+                        <div class="progress-step" id="step-1">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">获取网站基本信息...</span>
+                        </div>
+                        <div class="progress-step" id="step-2">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">分析页面结构...</span>
+                        </div>
+                        <div class="progress-step" id="step-3">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">检查技术SEO...</span>
+                        </div>
+                        <div class="progress-step" id="step-4">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">分析内容质量...</span>
+                        </div>
+                        <div class="progress-step" id="step-5">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">实时获取SEO最新知识...</span>
+                        </div>
+                        <div class="progress-step" id="step-6">
+                            <span class="step-icon">⏳</span>
+                            <span class="step-text">AI深度分析生成建议...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 分析结果显示 -->
+            <div id="seo-analysis-results" class="ai-optimizer-card" style="display: none;">
+                <h2>📋 AI分析报告</h2>
+                
+                <!-- SEO评分 -->
+                <div class="seo-score-section" style="background: linear-gradient(135deg, #165DFF 0%, #7E22CE 100%); color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <h3 style="margin: 0; font-size: 18px;">网站SEO总评分</h3>
+                            <p style="margin: 5px 0 0 0; opacity: 0.9;">基于AI深度分析的综合评估</p>
+                        </div>
+                        <div style="text-align: center;">
+                            <div id="seo-total-score" style="font-size: 48px; font-weight: bold;">--</div>
+                            <div style="font-size: 14px; opacity: 0.9;">/ 100分</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 详细分析数据 -->
+                <div class="analysis-details" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                    <div class="detail-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #165DFF;">
+                        <h4 style="margin-top: 0; color: #165DFF;">📊 技术SEO</h4>
+                        <div id="technical-seo-details">正在分析...</div>
+                    </div>
+                    <div class="detail-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #00F5D4;">
+                        <h4 style="margin-top: 0; color: #00F5D4;">📝 内容质量</h4>
+                        <div id="content-quality-details">正在分析...</div>
+                    </div>
+                    <div class="detail-card" style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #7E22CE;">
+                        <h4 style="margin-top: 0; color: #7E22CE;">⚡ 性能指标</h4>
+                        <div id="performance-details">正在分析...</div>
+                    </div>
+                </div>
+                
+                <!-- AI建议 -->
+                <div class="ai-suggestions-section">
+                    <h3>🤖 AI智能优化建议</h3>
+                    <div id="ai-suggestions-content" style="background: #fff; border: 1px solid #e1e5e9; border-radius: 8px; padding: 20px; white-space: pre-wrap; line-height: 1.6;">
+                        AI分析结果将在此显示...
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 自动优化面板 -->
+            <div id="auto-optimization-panel" class="ai-optimizer-card" style="display: none;">
+                <h2>🛠️ 自动优化执行</h2>
+                <p style="color: #666; margin-bottom: 20px;">根据AI分析结果，以下优化项目可以自动执行：</p>
+                
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">优化选项</th>
+                        <td>
+                            <fieldset>
+                                <label><input type="checkbox" id="auto_optimize_images" checked> 自动优化图片（添加缺失的alt属性）</label><br>
+                                <label><input type="checkbox" id="auto_generate_sitemap" checked> 自动生成/更新sitemap.xml</label><br>
+                                <label><input type="checkbox" id="auto_optimize_database" checked> 数据库优化清理</label><br>
+                                <label><input type="checkbox" id="auto_fix_meta" checked> 自动修复Meta标签</label><br>
+                                <label><input type="checkbox" id="auto_improve_speed" checked> 自动性能优化</label>
+                            </fieldset>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">执行方式</th>
+                        <td>
+                            <select id="optimization_mode" class="regular-text">
+                                <option value="manual">手动确认执行</option>
+                                <option value="scheduled">定时自动执行</option>
+                                <option value="immediate">立即自动执行</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr id="schedule-options" style="display: none;">
+                        <th scope="row">执行频率</th>
+                        <td>
+                            <select id="optimization_schedule" class="regular-text">
+                                <option value="daily">每天一次</option>
+                                <option value="weekly">每周一次</option>
+                                <option value="monthly">每月一次</option>
+                            </select>
+                        </td>
+                    </tr>
+                </table>
+                
+                <p class="submit">
+                    <button type="button" class="button button-primary" id="execute-optimization">⚡ 执行优化</button>
+                    <button type="button" class="button button-secondary" id="preview-changes">👁️ 预览更改</button>
+                    <span id="optimization-status" style="margin-left: 15px; font-weight: bold;"></span>
+                </p>
+                
+                <div id="optimization-results" style="margin-top: 20px; display: none;">
+                    <h3>优化执行结果</h3>
+                    <div style="background: #f5f5f5; padding: 15px; border-radius: 5px;">
+                        <ul id="optimization-log"></ul>
+                    </div>
+                </div>
             </div>
         </div>
+        
+        <script>
+        jQuery(document).ready(function($) {
+            var nonce = "<?php echo wp_create_nonce('ai-opt-nonce'); ?>";
+            var ajaxurl = "<?php echo admin_url('admin-ajax.php'); ?>";
+            
+            // 开始AI深度分析
+            $("#start-ai-seo-analysis").click(function() {
+                var btn = $(this);
+                var aiModel = $("#seo_ai_model").val();
+                
+                btn.prop("disabled", true).text("🔄 分析中...");
+                $("#analysis-progress").show();
+                $("#seo-analysis-results").hide();
+                
+                // 模拟分析步骤进度
+                simulateAnalysisProgress();
+                
+                $.post(ajaxurl, {
+                    action: "ai_opt_run_seo_analysis",
+                    nonce: nonce,
+                    ai_model: aiModel
+                }, function(response) {
+                    if (response.success) {
+                        displayAnalysisResults(response.data);
+                        $("#auto-optimization-panel").show();
+                    } else {
+                        alert("分析失败: " + response.data.message);
+                    }
+                    btn.prop("disabled", false).text("🚀 开始AI深度分析");
+                    $("#analysis-progress").hide();
+                }).fail(function() {
+                    alert("网络错误，请稍后重试");
+                    btn.prop("disabled", false).text("🚀 开始AI深度分析");
+                    $("#analysis-progress").hide();
+                });
+            });
+            
+            // 执行优化
+            $("#execute-optimization").click(function() {
+                var btn = $(this);
+                btn.prop("disabled", true).text("⚡ 执行中...");
+                
+                var settings = {
+                    auto_optimize_images: $("#auto_optimize_images").is(":checked"),
+                    auto_generate_sitemap: $("#auto_generate_sitemap").is(":checked"),
+                    auto_optimize_database: $("#auto_optimize_database").is(":checked")
+                };
+                
+                $.post(ajaxurl, {
+                    action: "ai_opt_apply_seo_optimization",
+                    nonce: nonce,
+                    ...settings
+                }, function(response) {
+                    if (response.success) {
+                        displayOptimizationResults(response.data);
+                        $("#optimization-results").show();
+                    } else {
+                        alert("优化失败: " + response.data.message);
+                    }
+                    btn.prop("disabled", false).text("⚡ 执行优化");
+                });
+            });
+            
+            // 优化模式切换
+            $("#optimization_mode").change(function() {
+                if ($(this).val() === "scheduled") {
+                    $("#schedule-options").show();
+                } else {
+                    $("#schedule-options").hide();
+                }
+            });
+            
+            function simulateAnalysisProgress() {
+                var steps = ["step-1", "step-2", "step-3", "step-4", "step-5", "step-6"];
+                var currentStep = 0;
+                
+                var interval = setInterval(function() {
+                    if (currentStep < steps.length) {
+                        $("#" + steps[currentStep] + " .step-icon").text("✅");
+                        $("#" + steps[currentStep]).css("color", "#165DFF");
+                        currentStep++;
+                    } else {
+                        clearInterval(interval);
+                    }
+                }, 2000);
+            }
+            
+            function displayAnalysisResults(data) {
+                $("#seo-analysis-results").show();
+                $("#seo-total-score").text(data.analysis_data ? calculateTotalScore(data.analysis_data) : "--");
+                $("#ai-suggestions-content").text(data.suggestions || "AI分析完成，建议已生成");
+                
+                // 显示详细分析数据
+                if (data.analysis_data) {
+                    displayTechnicalSEO(data.analysis_data.technical);
+                    displayContentQuality(data.analysis_data.content);
+                    displayPerformanceDetails(data.analysis_data.site_info);
+                }
+            }
+            
+            function displayOptimizationResults(data) {
+                var logHtml = "";
+                if (data.results) {
+                    Object.keys(data.results).forEach(function(key) {
+                        logHtml += "<li>✅ " + data.results[key] + "</li>";
+                    });
+                }
+                $("#optimization-log").html(logHtml);
+            }
+            
+            function calculateTotalScore(analysisData) {
+                // 简化的评分计算
+                var score = 100;
+                if (analysisData.technical && !analysisData.technical.has_ssl) score -= 10;
+                if (analysisData.technical && !analysisData.technical.sitemap_exists) score -= 10;
+                if (analysisData.structure && analysisData.structure.h1_count !== 1) score -= 5;
+                return Math.max(0, score);
+            }
+            
+            function displayTechnicalSEO(technicalData) {
+                if (!technicalData) return;
+                var html = "<ul>";
+                html += "<li>SSL证书: " + (technicalData.has_ssl ? "✅ 已配置" : "❌ 未配置") + "</li>";
+                html += "<li>Sitemap: " + (technicalData.sitemap_exists ? "✅ 存在" : "❌ 不存在") + "</li>";
+                html += "<li>Robots.txt: " + (technicalData.robots_txt_exists ? "✅ 存在" : "❌ 不存在") + "</li>";
+                html += "<li>移动友好: " + (technicalData.mobile_friendly ? "✅ 是" : "❌ 否") + "</li>";
+                html += "</ul>";
+                $("#technical-seo-details").html(html);
+            }
+            
+            function displayContentQuality(contentData) {
+                if (!contentData) return;
+                var html = "<ul>";
+                html += "<li>平均字数: " + Math.round(contentData.average_word_count || 0) + " 字</li>";
+                html += "<li>文章总数: " + (contentData.total_posts || 0) + " 篇</li>";
+                html += "<li>热门关键词: " + Object.keys(contentData.top_keywords || {}).slice(0, 3).join(", ") + "</li>";
+                html += "</ul>";
+                $("#content-quality-details").html(html);
+            }
+            
+            function displayPerformanceDetails(siteInfo) {
+                if (!siteInfo) return;
+                var html = "<ul>";
+                html += "<li>页面加载时间: " + (siteInfo.load_time || 0) + " 秒</li>";
+                html += "<li>网站标题: " + (siteInfo.title || "未设置") + "</li>";
+                html += "<li>Meta描述: " + (siteInfo.description ? "已设置" : "未设置") + "</li>";
+                html += "</ul>";
+                $("#performance-details").html(html);
+            }
+        });
+        </script>
+        
+        <style>
+        .progress-step {
+            padding: 8px 0;
+            font-size: 14px;
+        }
+        .progress-step .step-icon {
+            display: inline-block;
+            width: 20px;
+            margin-right: 10px;
+        }
+        .detail-card h4 {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #ai-suggestions-content {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        </style>
         <?php
     }
     
@@ -1817,7 +2328,122 @@ class AI_Website_Optimizer {
     // 插件停用
     public function deactivate() {
         wp_clear_scheduled_hook('ai_optimizer_cron');
+        wp_clear_scheduled_hook('ai_patrol_system_check');
         flush_rewrite_rules();
+    }
+    
+    /**
+     * AJAX: 运行SEO分析
+     */
+    public function ajax_run_seo_analysis() {
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai-opt-nonce') || !current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $ai_model = sanitize_text_field($_POST['ai_model'] ?? 'Qwen/QwQ-32B-Preview');
+        
+        $seo_analyzer = new AI_SEO_Analyzer();
+        $results = $seo_analyzer->analyze_website_seo($ai_model);
+        
+        if (isset($results['error'])) {
+            wp_send_json_error(array('message' => $results['error']));
+        } else {
+            wp_send_json_success(array(
+                'message' => 'SEO分析完成',
+                'suggestions' => $results['suggestions'],
+                'model_used' => $results['model_used'],
+                'analysis_data' => $results['analysis_data']
+            ));
+        }
+    }
+    
+    /**
+     * AJAX: 应用SEO优化
+     */
+    public function ajax_apply_seo_optimization() {
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai-opt-nonce') || !current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $optimization_settings = array(
+            'auto_optimize_images' => isset($_POST['auto_optimize_images']),
+            'auto_generate_sitemap' => isset($_POST['auto_generate_sitemap']),
+            'auto_optimize_database' => isset($_POST['auto_optimize_database'])
+        );
+        
+        $seo_analyzer = new AI_SEO_Analyzer();
+        $results = $seo_analyzer->execute_auto_optimization($optimization_settings);
+        
+        wp_send_json_success(array(
+            'message' => '自动优化完成',
+            'results' => $results
+        ));
+    }
+    
+    /**
+     * AJAX: 运行AI巡逻检查
+     */
+    public function ajax_run_patrol_check() {
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai-opt-nonce') || !current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $patrol_system = new AI_Patrol_System();
+        $results = $patrol_system->run_automated_patrol();
+        
+        if (!$results) {
+            wp_send_json_error(array('message' => '巡逻系统未启用或API密钥未配置'));
+        } else {
+            wp_send_json_success(array(
+                'message' => 'AI巡逻检查完成',
+                'results' => $results
+            ));
+        }
+    }
+    
+    /**
+     * AJAX: 获取巡逻历史
+     */
+    public function ajax_get_patrol_history() {
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai-opt-nonce') || !current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $patrol_system = new AI_Patrol_System();
+        $history = $patrol_system->get_patrol_history();
+        
+        wp_send_json_success(array(
+            'history' => $history
+        ));
+    }
+    
+    /**
+     * AJAX: 更新巡逻设置
+     */
+    public function ajax_update_patrol_settings() {
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai-opt-nonce') || !current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $settings = array(
+            'enabled' => isset($_POST['patrol_enabled']),
+            'interval' => sanitize_text_field($_POST['patrol_interval'] ?? 'hourly'),
+            'ai_model' => sanitize_text_field($_POST['patrol_ai_model'] ?? 'Qwen/QwQ-32B-Preview'),
+            'auto_fix' => isset($_POST['patrol_auto_fix']),
+            'monitor_database' => isset($_POST['monitor_database']),
+            'monitor_code' => isset($_POST['monitor_code']),
+            'monitor_performance' => isset($_POST['monitor_performance']),
+            'monitor_security' => isset($_POST['monitor_security'])
+        );
+        
+        $patrol_system = new AI_Patrol_System();
+        $result = $patrol_system->update_patrol_settings($settings);
+        
+        if ($result) {
+            wp_send_json_success(array('message' => '巡逻设置已更新'));
+        } else {
+            wp_send_json_error(array('message' => '设置更新失败'));
+        }
     }
 }
 
