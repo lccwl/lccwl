@@ -137,6 +137,31 @@ ai-website-optimizer/
   - 添加完整的JavaScript交互功能
   - 创建详细的WordPress安装说明文档
 
+- July 07, 2025. 重构AI对接系统，按照Siliconflow API文档完全重建
+  - 按照用户提供的Siliconflow API官方文档严格重构AI对接
+  - 实现四种内容类型的真实API调用：
+    - 文本生成：使用Qwen/QwQ-32B模型，/v1/chat/completions端点
+    - 图片生成：使用stabilityai/stable-diffusion-xl-base-1.0，/v1/images/generations端点
+    - 视频生成：使用Lightricks/LTX-Video，/v1/video/submit + /v1/video/status端点
+    - 音频生成：使用fishaudio/fish-speech-1.5，/v1/audio/speech端点
+  - 添加完整的WordPress自动发布系统：
+    - 三种发布模式：草稿保存、立即发布、定时发布
+    - 智能内容格式化：根据内容类型自动生成HTML标签
+    - 文章元数据标记：自动标记AI生成内容和生成时间
+    - 发布后返回编辑链接，方便用户管理
+  - 实现实时状态显示和进度反馈：
+    - 不同内容类型显示相应的生成状态信息
+    - 按钮状态动态变化（禁用/启用）
+    - 详细的错误处理和用户友好的提示信息
+  - API测试功能增强：
+    - 使用/v1/models端点真实验证API密钥有效性
+    - 详细的连接状态和错误代码反馈
+  - 用户界面优化：
+    - 添加发布设置面板，支持标题设置和发布选项
+    - 定时发布支持datetime-local输入，默认设置1小时后
+    - 内容显示区域根据类型自动调整（文本/图片/视频/音频）
+  - 更新详细使用说明文档，包含技术规格和故障排除指南
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.

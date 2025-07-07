@@ -48,6 +48,7 @@ class AI_Website_Optimizer {
         add_action('wp_ajax_ai_opt_save_settings', array($this, 'ajax_save_settings'));
         add_action('wp_ajax_ai_opt_run_analysis', array($this, 'ajax_run_analysis'));
         add_action('wp_ajax_ai_opt_generate_content', array($this, 'ajax_generate_content'));
+        add_action('wp_ajax_ai_opt_publish_to_wordpress', array($this, 'ajax_publish_to_wordpress'));
     }
     
     public function init() {
@@ -146,6 +147,9 @@ class AI_Website_Optimizer {
                 });
                 
                 // AI内容生成
+                var currentContentType = "";
+                var currentContent = "";
+                
                 $("#generate-content-btn").click(function() {
                     var btn = $(this);
                     var contentType = $("#content_type").val();
@@ -159,6 +163,9 @@ class AI_Website_Optimizer {
                     btn.prop("disabled", true).text("生成中...");
                     $("#generation-result").hide();
                     
+                    // 显示实时状态
+                    showGenerationStatus(contentType);
+                    
                     $.post(ajaxurl, {
                         action: "ai_opt_generate_content",
                         nonce: nonce,
@@ -166,8 +173,10 @@ class AI_Website_Optimizer {
                         prompt: prompt
                     }, function(response) {
                         if (response.success) {
+                            currentContentType = response.data.type;
+                            currentContent = response.data.content;
+                            displayGeneratedContent(response.data.content, response.data.type);
                             $("#generation-result").show();
-                            $("#result-content").html(response.data.content || response.data.message);
                         } else {
                             alert("生成失败: " + (response.data.message || "请检查API密钥是否配置正确"));
                         }
@@ -175,6 +184,93 @@ class AI_Website_Optimizer {
                     }).fail(function() {
                         alert("网络错误，请稍后重试");
                         btn.prop("disabled", false).text("生成内容");
+                    });
+                });
+                
+                function showGenerationStatus(type) {
+                    var statusMessages = {
+                        "text": "正在生成文本内容...",
+                        "image": "正在生成图片，请耐心等待...",
+                        "video": "正在生成视频，这可能需要几分钟...",
+                        "audio": "正在合成音频..."
+                    };
+                    $("#generation-status").text(statusMessages[type] || "生成中...");
+                }
+                
+                function displayGeneratedContent(content, type) {
+                    var html = "";
+                    switch(type) {
+                        case "image":
+                            html = "<img src='" + content + "' style='max-width: 100%; height: auto; border-radius: 8px;' alt='生成的图片'>";
+                            break;
+                        case "video":
+                            html = "<video controls style='max-width: 100%; height: auto; border-radius: 8px;'><source src='" + content + "' type='video/mp4'>您的浏览器不支持视频播放。</video>";
+                            break;
+                        case "audio":
+                            html = "<audio controls style='width: 100%;'><source src='" + content + "' type='audio/mpeg'>您的浏览器不支持音频播放。</audio>";
+                            break;
+                        case "text":
+                        default:
+                            html = "<div style='background: white; padding: 15px; border-radius: 4px; white-space: pre-wrap;'>" + content + "</div>";
+                            break;
+                    }
+                    $("#result-content").html(html);
+                    $("#generation-status").text("");
+                }
+                
+                // 发布类型选择处理
+                $("#publish_type").change(function() {
+                    if ($(this).val() === "scheduled") {
+                        $("#schedule_row").show();
+                        // 设置默认时间为1小时后
+                        var now = new Date();
+                        now.setHours(now.getHours() + 1);
+                        var isoString = now.toISOString().slice(0, 16);
+                        $("#schedule_time").val(isoString);
+                    } else {
+                        $("#schedule_row").hide();
+                    }
+                });
+                
+                // 发布到WordPress
+                $("#publish-content-btn").click(function() {
+                    var btn = $(this);
+                    var title = $("#post_title").val();
+                    var publishType = $("#publish_type").val();
+                    var scheduleTime = $("#schedule_time").val();
+                    
+                    if (!title) {
+                        alert("请输入文章标题");
+                        return;
+                    }
+                    
+                    if (!currentContent) {
+                        alert("请先生成内容");
+                        return;
+                    }
+                    
+                    btn.prop("disabled", true).text("发布中...");
+                    
+                    $.post(ajaxurl, {
+                        action: "ai_opt_publish_to_wordpress",
+                        nonce: nonce,
+                        title: title,
+                        content: currentContent,
+                        content_type: currentContentType,
+                        publish_type: publishType,
+                        schedule_time: scheduleTime
+                    }, function(response) {
+                        if (response.success) {
+                            alert(response.data.message + "\\n\\n编辑链接: " + response.data.edit_link);
+                            // 清空表单
+                            $("#post_title").val("");
+                        } else {
+                            alert("发布失败: " + (response.data.message || "未知错误"));
+                        }
+                        btn.prop("disabled", false).text("发布到WordPress");
+                    }).fail(function() {
+                        alert("网络错误，请稍后重试");
+                        btn.prop("disabled", false).text("发布到WordPress");
                     });
                 });
                 
@@ -409,12 +505,44 @@ class AI_Website_Optimizer {
                     
                     <p class="submit">
                         <button type="button" class="button button-primary" id="generate-content-btn">生成内容</button>
+                        <span id="generation-status" style="margin-left: 10px; color: #165DFF; font-weight: bold;"></span>
                     </p>
                 </form>
                 
                 <div id="generation-result" style="display:none;">
                     <h3>生成结果</h3>
                     <div id="result-content"></div>
+                    
+                    <div id="publish-section" style="margin-top: 20px; padding: 15px; background: #f5f5f5; border-radius: 5px;">
+                        <h4>发布设置</h4>
+                        <table class="form-table">
+                            <tr>
+                                <th scope="row"><label for="post_title">文章标题</label></th>
+                                <td>
+                                    <input type="text" id="post_title" name="post_title" class="regular-text" placeholder="为生成的内容设置标题...">
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><label for="publish_type">发布类型</label></th>
+                                <td>
+                                    <select id="publish_type" name="publish_type" class="regular-text">
+                                        <option value="draft">保存草稿</option>
+                                        <option value="auto">立即发布</option>
+                                        <option value="scheduled">定时发布</option>
+                                    </select>
+                                </td>
+                            </tr>
+                            <tr id="schedule_row" style="display: none;">
+                                <th scope="row"><label for="schedule_time">发布时间</label></th>
+                                <td>
+                                    <input type="datetime-local" id="schedule_time" name="schedule_time" class="regular-text">
+                                </td>
+                            </tr>
+                        </table>
+                        <p class="submit">
+                            <button type="button" id="publish-content-btn" class="button button-secondary">发布到WordPress</button>
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -546,25 +674,125 @@ class AI_Website_Optimizer {
         // 调用Siliconflow API生成内容
         $response = $this->call_siliconflow_api($content_type, $prompt, $api_key);
         
-        if ($response) {
+        if (isset($response['error'])) {
+            wp_send_json_error(array('message' => $response['error']));
+            return;
+        }
+        
+        if (isset($response['content'])) {
             wp_send_json_success(array(
                 'message' => '生成成功',
-                'content' => $response
+                'content' => $response['content'],
+                'type' => $response['type']
             ));
         } else {
             wp_send_json_error(array('message' => 'API调用失败，请检查网络连接'));
         }
     }
     
+    // 新增：发布到WordPress的AJAX处理
+    public function ajax_publish_to_wordpress() {
+        check_ajax_referer('ai-opt-nonce', 'nonce');
+        
+        $title = sanitize_text_field($_POST['title'] ?? '');
+        $content = sanitize_textarea_field($_POST['content'] ?? '');
+        $content_type = sanitize_text_field($_POST['content_type'] ?? 'text');
+        $publish_type = sanitize_text_field($_POST['publish_type'] ?? 'draft');
+        $schedule_time = sanitize_text_field($_POST['schedule_time'] ?? '');
+        
+        if (empty($title) || empty($content)) {
+            wp_send_json_error(array('message' => '标题和内容不能为空'));
+            return;
+        }
+        
+        $post_data = array(
+            'post_title' => $title,
+            'post_content' => $this->format_content_for_wordpress($content, $content_type),
+            'post_status' => ($publish_type === 'auto') ? 'publish' : 'draft',
+            'post_author' => get_current_user_id(),
+            'post_type' => 'post'
+        );
+        
+        // 如果是定时发布
+        if ($publish_type === 'scheduled' && !empty($schedule_time)) {
+            $post_data['post_status'] = 'future';
+            $post_data['post_date'] = date('Y-m-d H:i:s', strtotime($schedule_time));
+        }
+        
+        $post_id = wp_insert_post($post_data);
+        
+        if (is_wp_error($post_id)) {
+            wp_send_json_error(array('message' => '发布失败: ' . $post_id->get_error_message()));
+            return;
+        }
+        
+        // 添加自定义字段标记这是AI生成的内容
+        add_post_meta($post_id, '_ai_generated', true);
+        add_post_meta($post_id, '_ai_content_type', $content_type);
+        add_post_meta($post_id, '_ai_generation_time', current_time('mysql'));
+        
+        $message = '';
+        $edit_link = admin_url('post.php?post=' . $post_id . '&action=edit');
+        
+        switch ($publish_type) {
+            case 'auto':
+                $message = '内容已自动发布！';
+                break;
+            case 'scheduled':
+                $message = '内容已安排定时发布！';
+                break;
+            default:
+                $message = '内容已保存为草稿！';
+                break;
+        }
+        
+        wp_send_json_success(array(
+            'message' => $message,
+            'post_id' => $post_id,
+            'edit_link' => $edit_link
+        ));
+    }
+    
+    private function format_content_for_wordpress($content, $type) {
+        switch ($type) {
+            case 'image':
+                return '<img src="' . esc_url($content) . '" alt="AI生成的图片" style="max-width: 100%; height: auto;" />';
+            case 'video':
+                return '<video controls style="max-width: 100%; height: auto;"><source src="' . esc_url($content) . '" type="video/mp4">您的浏览器不支持视频播放。</video>';
+            case 'audio':
+                return '<audio controls><source src="' . esc_url($content) . '" type="audio/mpeg">您的浏览器不支持音频播放。</audio>';
+            case 'text':
+            default:
+                return wpautop($content);
+        }
+    }
+    
     private function call_siliconflow_api($type, $prompt, $api_key) {
+        switch ($type) {
+            case 'text':
+                return $this->generate_text($prompt, $api_key);
+            case 'image':
+                return $this->generate_image($prompt, $api_key);
+            case 'video':
+                return $this->generate_video($prompt, $api_key);
+            case 'audio':
+                return $this->generate_audio($prompt, $api_key);
+            default:
+                return $this->generate_text($prompt, $api_key);
+        }
+    }
+    
+    private function generate_text($prompt, $api_key) {
         $url = 'https://api.siliconflow.cn/v1/chat/completions';
         
         $data = array(
-            'model' => 'deepseek-ai/DeepSeek-V2.5',
+            'model' => 'Qwen/QwQ-32B',
             'messages' => array(
                 array('role' => 'user', 'content' => $prompt)
             ),
-            'stream' => false
+            'stream' => false,
+            'max_tokens' => 2000,
+            'temperature' => 0.7
         );
         
         $args = array(
@@ -573,23 +801,162 @@ class AI_Website_Optimizer {
                 'Content-Type' => 'application/json'
             ),
             'body' => json_encode($data),
-            'timeout' => 30
+            'timeout' => 60
         );
         
         $response = wp_remote_post($url, $args);
         
         if (is_wp_error($response)) {
-            return false;
+            return array('error' => $response->get_error_message());
         }
         
         $body = wp_remote_retrieve_body($response);
         $result = json_decode($body, true);
         
         if (isset($result['choices'][0]['message']['content'])) {
-            return $result['choices'][0]['message']['content'];
+            return array('content' => $result['choices'][0]['message']['content'], 'type' => 'text');
         }
         
-        return false;
+        return array('error' => '文本生成失败');
+    }
+    
+    private function generate_image($prompt, $api_key) {
+        $url = 'https://api.siliconflow.cn/v1/images/generations';
+        
+        $data = array(
+            'model' => 'stabilityai/stable-diffusion-xl-base-1.0',
+            'prompt' => $prompt,
+            'image_size' => '1024x1024',
+            'batch_size' => 1,
+            'num_inference_steps' => 20,
+            'guidance_scale' => 7.5
+        );
+        
+        $args = array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($data),
+            'timeout' => 120
+        );
+        
+        $response = wp_remote_post($url, $args);
+        
+        if (is_wp_error($response)) {
+            return array('error' => $response->get_error_message());
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+        
+        if (isset($result['images'][0]['url'])) {
+            return array('content' => $result['images'][0]['url'], 'type' => 'image');
+        }
+        
+        return array('error' => '图片生成失败');
+    }
+    
+    private function generate_video($prompt, $api_key) {
+        // 第一步：提交视频生成请求
+        $submit_url = 'https://api.siliconflow.cn/v1/video/submit';
+        
+        $data = array(
+            'model' => 'Lightricks/LTX-Video',
+            'prompt' => $prompt,
+            'num_inference_steps' => 30
+        );
+        
+        $args = array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($data),
+            'timeout' => 60
+        );
+        
+        $response = wp_remote_post($submit_url, $args);
+        
+        if (is_wp_error($response)) {
+            return array('error' => $response->get_error_message());
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+        
+        if (!isset($result['requestId'])) {
+            return array('error' => '视频生成请求失败');
+        }
+        
+        $request_id = $result['requestId'];
+        
+        // 第二步：轮询获取视频状态
+        $status_url = 'https://api.siliconflow.cn/v1/video/status';
+        $max_attempts = 30; // 最多等待5分钟
+        
+        for ($i = 0; $i < $max_attempts; $i++) {
+            sleep(10); // 等待10秒
+            
+            $status_data = array('requestId' => $request_id);
+            $status_args = array(
+                'headers' => array(
+                    'Authorization' => 'Bearer ' . $api_key,
+                    'Content-Type' => 'application/json'
+                ),
+                'body' => json_encode($status_data),
+                'timeout' => 30
+            );
+            
+            $status_response = wp_remote_post($status_url, $status_args);
+            
+            if (!is_wp_error($status_response)) {
+                $status_body = wp_remote_retrieve_body($status_response);
+                $status_result = json_decode($status_body, true);
+                
+                if (isset($status_result['videoUrl'])) {
+                    return array('content' => $status_result['videoUrl'], 'type' => 'video');
+                }
+            }
+        }
+        
+        return array('error' => '视频生成超时，请稍后查看');
+    }
+    
+    private function generate_audio($prompt, $api_key) {
+        $url = 'https://api.siliconflow.cn/v1/audio/speech';
+        
+        $data = array(
+            'model' => 'fishaudio/fish-speech-1.5',
+            'input' => $prompt,
+            'voice' => 'default',
+            'response_format' => 'mp3',
+            'speed' => 1.0
+        );
+        
+        $args = array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($data),
+            'timeout' => 60
+        );
+        
+        $response = wp_remote_post($url, $args);
+        
+        if (is_wp_error($response)) {
+            return array('error' => $response->get_error_message());
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+        
+        if (isset($result['url'])) {
+            return array('content' => $result['url'], 'type' => 'audio');
+        }
+        
+        return array('error' => '音频生成失败');
     }
     
     // 插件激活
