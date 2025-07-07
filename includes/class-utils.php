@@ -47,7 +47,8 @@ class AI_Optimizer_Utils {
      * 记录日志
      */
     public static function log($message, $level = 'info', $context = array()) {
-        if (!AI_Optimizer_Settings::get('enable_logging', true)) {
+        // 检查是否启用日志记录（避免循环依赖）
+        if (!get_option('ai_optimizer_enable_logging', true)) {
             return;
         }
         

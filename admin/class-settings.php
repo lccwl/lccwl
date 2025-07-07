@@ -9,6 +9,15 @@ if (!defined('ABSPATH')) {
 
 class AI_Optimizer_Settings {
     
+    private static $instance = null;
+    
+    public static function get_instance() {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+    
     /**
      * 渲染设置页面
      */
