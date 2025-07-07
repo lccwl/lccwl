@@ -34,6 +34,9 @@ class AI_Website_Optimizer {
     }
     
     private function __construct() {
+        // 加载依赖文件
+        $this->load_dependencies();
+        
         // 激活/停用钩子
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
@@ -48,9 +51,24 @@ class AI_Website_Optimizer {
         add_action('wp_ajax_ai_opt_save_settings', array($this, 'ajax_save_settings'));
         add_action('wp_ajax_ai_opt_run_analysis', array($this, 'ajax_run_analysis'));
         add_action('wp_ajax_ai_opt_generate_content', array($this, 'ajax_generate_content'));
+        add_action('wp_ajax_ai_opt_activate_license', array($this, 'ajax_activate_license'));
+        add_action('wp_ajax_ai_opt_deactivate_license', array($this, 'ajax_deactivate_license'));
+        add_action('wp_ajax_ai_opt_check_video_status', array($this, 'ajax_check_video_status'));
         add_action('wp_ajax_ai_opt_publish_to_wordpress', array($this, 'ajax_publish_to_wordpress'));
         add_action('wp_ajax_ai_opt_save_auto_settings', array($this, 'ajax_save_auto_settings'));
         add_action('wp_ajax_ai_opt_get_monitor_logs', array($this, 'ajax_get_monitor_logs'));
+    }
+    
+    private function load_dependencies() {
+        // 加载工具类
+        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-utils.php')) {
+            require_once AI_OPT_PLUGIN_PATH . 'includes/class-utils.php';
+        }
+        
+        // 加载授权管理类
+        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-license-manager.php')) {
+            require_once AI_OPT_PLUGIN_PATH . 'includes/class-license-manager.php';
+        }
     }
     
     public function init() {
@@ -75,6 +93,7 @@ class AI_Website_Optimizer {
         add_submenu_page('ai-optimizer', 'SEO优化', 'SEO优化', 'manage_options', 'ai-optimizer-seo', array($this, 'render_seo'));
         add_submenu_page('ai-optimizer', 'AI工具', 'AI工具', 'manage_options', 'ai-optimizer-tools', array($this, 'render_tools'));
         add_submenu_page('ai-optimizer', '插件设置', '插件设置', 'manage_options', 'ai-optimizer-settings', array($this, 'render_settings'));
+        add_submenu_page('ai-optimizer', '授权管理', '授权管理', 'manage_options', 'ai-optimizer-license', array($this, 'render_license'));
     }
     
     public function enqueue_admin_assets($hook) {
@@ -1021,6 +1040,10 @@ class AI_Website_Optimizer {
         <?php
     }
     
+    public function render_license() {
+        include AI_OPT_PLUGIN_PATH . 'admin/views/license.php';
+    }
+    
     public function render_settings() {
         ?>
         <div class="wrap ai-optimizer-wrap">
@@ -1346,6 +1369,17 @@ class AI_Website_Optimizer {
     }
     
     private function generate_video($prompt, $api_key, $video_model = '', $reference_image = '') {
+        // 授权检查
+        $license_manager = AI_Optimizer_License_Manager::get_instance();
+        if (!$license_manager->has_feature('ai_video')) {
+            return array('error' => '您的授权不支持视频生成功能，请升级到专业版或企业版');
+        }
+        
+        // 检查使用限制
+        if (!$license_manager->check_limit('video_generation', 1)) {
+            return array('error' => '已达到本月视频生成限制，请升级授权或等待下月重置');
+        }
+        
         // 第一步：提交视频生成请求
         $submit_url = 'https://api.siliconflow.cn/v1/video/submit';
         
@@ -1364,19 +1398,38 @@ class AI_Website_Optimizer {
             $data['image'] = $reference_image;
         }
         
+        // 增加超时和重试机制
         $args = array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $api_key,
                 'Content-Type' => 'application/json'
             ),
             'body' => json_encode($data),
-            'timeout' => 60
+            'timeout' => 120, // 增加到120秒
+            'sslverify' => false, // 临时禁用SSL验证以避免证书问题
+            'user-agent' => 'AI-Website-Optimizer/' . AI_OPT_VERSION
         );
         
-        $response = wp_remote_post($submit_url, $args);
+        // 重试机制
+        $max_retries = 3;
+        $response = null;
+        
+        for ($retry = 0; $retry < $max_retries; $retry++) {
+            $response = wp_remote_post($submit_url, $args);
+            
+            if (!is_wp_error($response)) {
+                break;
+            }
+            
+            // 如果不是最后一次重试，等待后重试
+            if ($retry < $max_retries - 1) {
+                sleep(2 * ($retry + 1)); // 递增等待时间
+            }
+        }
         
         if (is_wp_error($response)) {
-            return array('error' => $response->get_error_message());
+            AI_Optimizer_Utils::log('Video generation submit failed: ' . $response->get_error_message(), 'error');
+            return array('error' => '网络连接失败，请检查网络设置: ' . $response->get_error_message());
         }
         
         $body = wp_remote_retrieve_body($response);
@@ -1389,17 +1442,24 @@ class AI_Website_Optimizer {
             } elseif (isset($result['message'])) {
                 $error_msg .= ': ' . $result['message'];
             }
+            AI_Optimizer_Utils::log('Video generation error: ' . $error_msg, 'error');
             return array('error' => $error_msg);
         }
         
         $request_id = $result['requestId'];
         
+        // 保存请求ID到数据库，以便后续查询
+        $this->save_video_request($request_id, $prompt, $model);
+        
         // 第二步：轮询获取视频状态
         $status_url = 'https://api.siliconflow.cn/v1/video/status';
-        $max_attempts = 30; // 最多等待5分钟
+        $max_attempts = 60; // 增加到10分钟
         
         for ($i = 0; $i < $max_attempts; $i++) {
-            sleep(10); // 等待10秒
+            // 使用非阻塞等待
+            if ($i > 0) {
+                sleep(10); // 等待10秒
+            }
             
             $status_data = array('requestId' => $request_id);
             $status_args = array(
@@ -1408,7 +1468,8 @@ class AI_Website_Optimizer {
                     'Content-Type' => 'application/json'
                 ),
                 'body' => json_encode($status_data),
-                'timeout' => 30
+                'timeout' => 60,
+                'sslverify' => false
             );
             
             $status_response = wp_remote_post($status_url, $status_args);
@@ -1419,9 +1480,12 @@ class AI_Website_Optimizer {
                 
                 if (isset($status_result['status'])) {
                     if ($status_result['status'] === 'Succeed' && isset($status_result['results']['videos'][0]['url'])) {
+                        // 更新数据库状态
+                        $this->update_video_request($request_id, 'completed', $status_result['results']['videos'][0]['url']);
                         return array('content' => $status_result['results']['videos'][0]['url'], 'type' => 'video');
                     } elseif ($status_result['status'] === 'Failed') {
                         $reason = isset($status_result['reason']) ? $status_result['reason'] : '未知错误';
+                        $this->update_video_request($request_id, 'failed', null, $reason);
                         return array('error' => '视频生成失败: ' . $reason);
                     }
                     // 如果状态是 InQueue 或 InProgress，继续等待
@@ -1429,7 +1493,46 @@ class AI_Website_Optimizer {
             }
         }
         
-        return array('error' => '视频生成超时，请稍后查看');
+        // 返回请求ID，让用户可以稍后查询
+        return array(
+            'request_id' => $request_id,
+            'type' => 'video',
+            'status' => 'processing',
+            'message' => '视频正在生成中，请稍后在"视频生成状态"中查看结果'
+        );
+    }
+    
+    private function save_video_request($request_id, $prompt, $model) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ai_optimizer_video_requests';
+        
+        $wpdb->insert(
+            $table_name,
+            array(
+                'request_id' => $request_id,
+                'prompt' => $prompt,
+                'model' => $model,
+                'status' => 'processing',
+                'created_at' => current_time('mysql'),
+                'updated_at' => current_time('mysql')
+            )
+        );
+    }
+    
+    private function update_video_request($request_id, $status, $video_url = null, $error_message = null) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ai_optimizer_video_requests';
+        
+        $wpdb->update(
+            $table_name,
+            array(
+                'status' => $status,
+                'video_url' => $video_url,
+                'error_message' => $error_message,
+                'updated_at' => current_time('mysql')
+            ),
+            array('request_id' => $request_id)
+        );
     }
     
     private function generate_audio($prompt, $api_key) {
@@ -1569,6 +1672,116 @@ class AI_Website_Optimizer {
         }
         
         wp_send_json_success(array('logs' => $logs));
+    }
+    
+    // 授权管理AJAX处理
+    public function ajax_activate_license() {
+        check_ajax_referer('ai_opt_activate_license', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => '权限不足'));
+            return;
+        }
+        
+        $license_key = sanitize_text_field($_POST['license_key'] ?? '');
+        
+        $license_manager = AI_Optimizer_License_Manager::get_instance();
+        $result = $license_manager->activate_license($license_key);
+        
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result);
+        }
+    }
+    
+    public function ajax_deactivate_license() {
+        check_ajax_referer('ai_opt_deactivate_license', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => '权限不足'));
+            return;
+        }
+        
+        $license_manager = AI_Optimizer_License_Manager::get_instance();
+        $license_manager->deactivate_license('用户手动停用');
+        
+        wp_send_json_success();
+    }
+    
+    public function ajax_check_video_status() {
+        check_ajax_referer('ai_optimizer_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => '权限不足'));
+            return;
+        }
+        
+        $request_id = sanitize_text_field($_POST['request_id'] ?? '');
+        
+        if (empty($request_id)) {
+            wp_send_json_error(array('message' => '请求ID不能为空'));
+            return;
+        }
+        
+        $api_key = get_option('ai_optimizer_api_key');
+        
+        if (empty($api_key)) {
+            wp_send_json_error(array('message' => 'API密钥未配置'));
+            return;
+        }
+        
+        // 检查视频状态
+        $status_url = 'https://api.siliconflow.cn/v1/video/status';
+        $status_data = array('requestId' => $request_id);
+        
+        $args = array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($status_data),
+            'timeout' => 30,
+            'sslverify' => false
+        );
+        
+        $response = wp_remote_post($status_url, $args);
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error(array('message' => '检查状态失败: ' . $response->get_error_message()));
+            return;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+        
+        if (isset($result['status'])) {
+            if ($result['status'] === 'Succeed' && isset($result['results']['videos'][0]['url'])) {
+                // 更新数据库
+                $this->update_video_request($request_id, 'completed', $result['results']['videos'][0]['url']);
+                
+                wp_send_json_success(array(
+                    'status' => 'completed',
+                    'video_url' => $result['results']['videos'][0]['url']
+                ));
+            } elseif ($result['status'] === 'Failed') {
+                $reason = isset($result['reason']) ? $result['reason'] : '未知错误';
+                $this->update_video_request($request_id, 'failed', null, $reason);
+                
+                wp_send_json_error(array(
+                    'status' => 'failed',
+                    'message' => '视频生成失败: ' . $reason
+                ));
+            } else {
+                // 仍在处理中
+                wp_send_json_success(array(
+                    'status' => 'processing',
+                    'message' => '视频仍在生成中...'
+                ));
+            }
+        } else {
+            wp_send_json_error(array('message' => '无法获取状态信息'));
+        }
     }
     
     // 插件激活
