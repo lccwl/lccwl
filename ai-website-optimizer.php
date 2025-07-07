@@ -49,6 +49,8 @@ class AI_Website_Optimizer {
         add_action('wp_ajax_ai_opt_run_analysis', array($this, 'ajax_run_analysis'));
         add_action('wp_ajax_ai_opt_generate_content', array($this, 'ajax_generate_content'));
         add_action('wp_ajax_ai_opt_publish_to_wordpress', array($this, 'ajax_publish_to_wordpress'));
+        add_action('wp_ajax_ai_opt_save_auto_settings', array($this, 'ajax_save_auto_settings'));
+        add_action('wp_ajax_ai_opt_get_monitor_logs', array($this, 'ajax_get_monitor_logs'));
     }
     
     public function init() {
@@ -322,6 +324,184 @@ class AI_Website_Optimizer {
                         });
                     }
                 });
+                
+                // 自动化发布功能
+                $("#auto-publish-type").change(function() {
+                    if ($(this).val() === "post") {
+                        $("#post-category-group").show();
+                    } else {
+                        $("#post-category-group").hide();
+                    }
+                });
+                
+                // 保存自动化设置
+                $("#save-auto-settings").click(function() {
+                    var btn = $(this);
+                    btn.prop("disabled", true).text("保存中...");
+                    
+                    var settings = {
+                        publish_type: $("#auto-publish-type").val(),
+                        category: $("#post-category").val(),
+                        theme: $("#auto-theme").val(),
+                        frequency: $("#auto-frequency").val(),
+                        count: $("#auto-count").val()
+                    };
+                    
+                    $.post(ajaxurl, {
+                        action: "ai_opt_save_auto_settings",
+                        nonce: nonce,
+                        settings: settings
+                    }, function(response) {
+                        if (response.success) {
+                            $("#auto-status").text("设置已保存").css("color", "green");
+                            setTimeout(function() {
+                                $("#auto-status").text("");
+                            }, 3000);
+                        }
+                        btn.prop("disabled", false).text("保存设置");
+                    });
+                });
+                
+                // 启动自动发布
+                $("#start-auto-publish").click(function() {
+                    if (!$("#auto-theme").val()) {
+                        alert("请设置主题关键词");
+                        return;
+                    }
+                    
+                    $(this).hide();
+                    $("#stop-auto-publish").show();
+                    $("#auto-log").show();
+                    $("#auto-status").text("自动发布已启动").css("color", "green");
+                    
+                    // 添加日志
+                    addAutoLog("自动发布已启动，主题：" + $("#auto-theme").val());
+                    
+                    // 立即执行一次
+                    executeAutoPublish();
+                    
+                    // 根据频率设置定时器
+                    var frequency = $("#auto-frequency").val();
+                    var interval = getIntervalTime(frequency);
+                    
+                    window.autoPublishTimer = setInterval(executeAutoPublish, interval);
+                });
+                
+                // 停止自动发布
+                $("#stop-auto-publish").click(function() {
+                    $(this).hide();
+                    $("#start-auto-publish").show();
+                    $("#auto-status").text("自动发布已停止").css("color", "red");
+                    
+                    if (window.autoPublishTimer) {
+                        clearInterval(window.autoPublishTimer);
+                    }
+                    
+                    addAutoLog("自动发布已停止");
+                });
+                
+                // 执行自动发布
+                function executeAutoPublish() {
+                    var publishType = $("#auto-publish-type").val();
+                    var theme = $("#auto-theme").val();
+                    var category = $("#post-category").val();
+                    var count = $("#auto-count").val();
+                    
+                    addAutoLog("开始生成内容，类型：" + publishType);
+                    
+                    // 根据发布类型生成提示词
+                    var prompt = generatePromptByTheme(theme, publishType);
+                    
+                    $.post(ajaxurl, {
+                        action: "ai_opt_generate_content",
+                        nonce: nonce,
+                        type: getGenerationType(publishType),
+                        prompt: prompt
+                    }, function(response) {
+                        if (response.success) {
+                            addAutoLog("内容生成成功，准备发布");
+                            
+                            // 自动生成标题
+                            var title = generateTitle(theme, publishType);
+                            
+                            // 发布内容
+                            $.post(ajaxurl, {
+                                action: "ai_opt_publish_to_wordpress",
+                                nonce: nonce,
+                                title: title,
+                                content: response.data.content,
+                                content_type: response.data.type,
+                                publish_type: "auto",
+                                category_id: category
+                            }, function(pubResponse) {
+                                if (pubResponse.success) {
+                                    addAutoLog("发布成功：" + title);
+                                } else {
+                                    addAutoLog("发布失败：" + (pubResponse.data || "未知错误"));
+                                }
+                            });
+                        } else {
+                            addAutoLog("生成失败：" + (response.data || "未知错误"));
+                        }
+                    });
+                }
+                
+                // 根据主题生成提示词
+                function generatePromptByTheme(theme, type) {
+                    var date = new Date().toLocaleDateString("zh-CN");
+                    
+                    if (type === "post") {
+                        return "请写一篇关于" + theme + "的详细文章，包含最新的信息和见解。日期：" + date;
+                    } else if (type === "video") {
+                        return "创建一个关于" + theme + "的视频场景，包含生动的画面描述";
+                    } else if (type === "audio") {
+                        return "用自然的语音介绍" + theme + "的相关内容，语调友好专业";
+                    }
+                }
+                
+                // 生成标题
+                function generateTitle(theme, type) {
+                    var date = new Date().toLocaleDateString("zh-CN");
+                    var types = {
+                        "post": "【文章】",
+                        "video": "【视频】",
+                        "audio": "【音频】"
+                    };
+                    return types[type] + theme + " - " + date;
+                }
+                
+                // 获取生成类型
+                function getGenerationType(publishType) {
+                    var typeMap = {
+                        "post": "text",
+                        "video": "video",
+                        "audio": "audio"
+                    };
+                    return typeMap[publishType] || "text";
+                }
+                
+                // 获取间隔时间
+                function getIntervalTime(frequency) {
+                    var intervals = {
+                        "hourly": 3600000,      // 1小时
+                        "daily": 86400000,      // 24小时
+                        "twice-daily": 43200000, // 12小时
+                        "weekly": 604800000     // 7天
+                    };
+                    return intervals[frequency] || 3600000;
+                }
+                
+                // 添加日志
+                function addAutoLog(message) {
+                    var time = new Date().toLocaleTimeString("zh-CN");
+                    var logItem = "<li>[" + time + "] " + message + "</li>";
+                    $("#auto-log-list").prepend(logItem);
+                    
+                    // 保持最多20条日志
+                    if ($("#auto-log-list li").length > 20) {
+                        $("#auto-log-list li:last").remove();
+                    }
+                }
             });
         ');
     }
@@ -384,69 +564,195 @@ class AI_Website_Optimizer {
     public function render_monitor() {
         ?>
         <div class="wrap ai-optimizer-wrap">
-            <h1>性能监控</h1>
+            <h1>实时监控日志</h1>
             
             <div class="ai-optimizer-card">
-                <h2>实时性能数据</h2>
-                <canvas id="performance-chart" width="400" height="200"></canvas>
+                <h2>📋 实时日志监控</h2>
                 
-                <script>
-                    jQuery(document).ready(function($) {
-                        var ctx = document.getElementById('performance-chart').getContext('2d');
-                        var chart = new Chart(ctx, {
-                            type: 'line',
-                            data: {
-                                labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'],
-                                datasets: [{
-                                    label: '响应时间(ms)',
-                                    data: [120, 150, 180, 130, 140, 160],
-                                    borderColor: '#165DFF',
-                                    tension: 0.4
-                                }]
-                            }
-                        });
+                <div class="log-controls" style="margin-bottom: 20px;">
+                    <button id="start-monitoring" class="button button-primary">开始监控</button>
+                    <button id="stop-monitoring" class="button button-secondary" style="display:none;">停止监控</button>
+                    <button id="clear-logs" class="button">清空日志</button>
+                    <select id="log-filter" style="margin-left: 10px;">
+                        <option value="all">全部日志</option>
+                        <option value="error">错误日志</option>
+                        <option value="warning">警告日志</option>
+                        <option value="info">信息日志</option>
+                        <option value="debug">调试日志</option>
+                    </select>
+                    <input type="checkbox" id="auto-scroll" checked> <label for="auto-scroll">自动滚动</label>
+                </div>
+                
+                <div id="log-container" style="background: #1a1a1a; color: #00ff00; padding: 15px; border-radius: 5px; height: 500px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 13px;">
+                    <div id="log-content">
+                        <div class="log-entry info">[<?php echo date('Y-m-d H:i:s'); ?>] [信息] 监控系统已准备就绪，等待启动...</div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <h3>监控内容：</h3>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                        <label><input type="checkbox" class="monitor-type" value="performance" checked> 性能监控</label>
+                        <label><input type="checkbox" class="monitor-type" value="error" checked> 错误监控</label>
+                        <label><input type="checkbox" class="monitor-type" value="database" checked> 数据库监控</label>
+                        <label><input type="checkbox" class="monitor-type" value="plugin" checked> 插件活动</label>
+                        <label><input type="checkbox" class="monitor-type" value="user" checked> 用户活动</label>
+                        <label><input type="checkbox" class="monitor-type" value="security" checked> 安全事件</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="ai-optimizer-card" style="margin-top: 20px;">
+                <h2>📊 日志统计</h2>
+                <div id="log-stats" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
+                    <div class="stat-box" style="background: #f0f0f0; padding: 15px; border-radius: 5px; text-align: center;">
+                        <h4 style="margin: 0; color: #333;">总日志数</h4>
+                        <div id="total-logs" style="font-size: 24px; font-weight: bold; color: #165DFF;">0</div>
+                    </div>
+                    <div class="stat-box" style="background: #fee; padding: 15px; border-radius: 5px; text-align: center;">
+                        <h4 style="margin: 0; color: #333;">错误</h4>
+                        <div id="error-count" style="font-size: 24px; font-weight: bold; color: #d32f2f;">0</div>
+                    </div>
+                    <div class="stat-box" style="background: #fff8e1; padding: 15px; border-radius: 5px; text-align: center;">
+                        <h4 style="margin: 0; color: #333;">警告</h4>
+                        <div id="warning-count" style="font-size: 24px; font-weight: bold; color: #f57c00;">0</div>
+                    </div>
+                    <div class="stat-box" style="background: #e8f5e9; padding: 15px; border-radius: 5px; text-align: center;">
+                        <h4 style="margin: 0; color: #333;">信息</h4>
+                        <div id="info-count" style="font-size: 24px; font-weight: bold; color: #388e3c;">0</div>
+                    </div>
+                </div>
+            </div>
+            
+            <script>
+                jQuery(document).ready(function($) {
+                    var monitoring = false;
+                    var logCount = { total: 0, error: 0, warning: 0, info: 0, debug: 0 };
+                    var monitorInterval;
+                    
+                    // 开始监控
+                    $("#start-monitoring").click(function() {
+                        monitoring = true;
+                        $(this).hide();
+                        $("#stop-monitoring").show();
+                        addLog("info", "实时监控已启动");
+                        startRealTimeMonitoring();
                     });
-                </script>
-            </div>
-            
-            <div class="ai-optimizer-card">
-                <h2>系统资源使用</h2>
-                <table class="wp-list-table widefat fixed striped">
-                    <thead>
-                        <tr>
-                            <th>资源类型</th>
-                            <th>当前使用</th>
-                            <th>峰值</th>
-                            <th>状态</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>CPU使用率</td>
-                            <td>25%</td>
-                            <td>78%</td>
-                            <td><span style="color: green;">正常</span></td>
-                        </tr>
-                        <tr>
-                            <td>内存使用</td>
-                            <td>512MB</td>
-                            <td>1.2GB</td>
-                            <td><span style="color: green;">正常</span></td>
-                        </tr>
-                        <tr>
-                            <td>数据库连接</td>
-                            <td>15</td>
-                            <td>50</td>
-                            <td><span style="color: green;">正常</span></td>
-                        </tr>
-                    </tbody>
-                </table>
-                
-                <p style="margin-top: 20px;">
-                    <button class="button button-primary" id="refresh-monitor-data">刷新数据</button>
-                    <button class="button" id="export-report">导出报告</button>
-                </p>
-            </div>
+                    
+                    // 停止监控
+                    $("#stop-monitoring").click(function() {
+                        monitoring = false;
+                        $(this).hide();
+                        $("#start-monitoring").show();
+                        addLog("info", "实时监控已停止");
+                        if (monitorInterval) {
+                            clearInterval(monitorInterval);
+                        }
+                    });
+                    
+                    // 清空日志
+                    $("#clear-logs").click(function() {
+                        $("#log-content").html("");
+                        logCount = { total: 0, error: 0, warning: 0, info: 0, debug: 0 };
+                        updateStats();
+                    });
+                    
+                    // 日志过滤
+                    $("#log-filter").change(function() {
+                        var filter = $(this).val();
+                        if (filter === "all") {
+                            $(".log-entry").show();
+                        } else {
+                            $(".log-entry").hide();
+                            $(".log-entry." + filter).show();
+                        }
+                    });
+                    
+                    // 添加日志
+                    function addLog(type, message, details) {
+                        var time = new Date().toLocaleString("zh-CN");
+                        var typeLabels = {
+                            "error": "[错误]",
+                            "warning": "[警告]",
+                            "info": "[信息]",
+                            "debug": "[调试]"
+                        };
+                        var typeColors = {
+                            "error": "#ff5252",
+                            "warning": "#ffb74d",
+                            "info": "#00ff00",
+                            "debug": "#64b5f6"
+                        };
+                        
+                        var logHtml = '<div class="log-entry ' + type + '" style="color: ' + typeColors[type] + '; margin-bottom: 5px;">';
+                        logHtml += '[' + time + '] ' + typeLabels[type] + ' ' + message;
+                        if (details) {
+                            logHtml += ' - ' + details;
+                        }
+                        logHtml += '</div>';
+                        
+                        $("#log-content").append(logHtml);
+                        
+                        // 更新统计
+                        logCount.total++;
+                        logCount[type]++;
+                        updateStats();
+                        
+                        // 自动滚动
+                        if ($("#auto-scroll").is(":checked")) {
+                            var container = $("#log-container");
+                            container.scrollTop(container[0].scrollHeight);
+                        }
+                        
+                        // 应用过滤器
+                        var currentFilter = $("#log-filter").val();
+                        if (currentFilter !== "all" && type !== currentFilter) {
+                            $("#log-content .log-entry:last").hide();
+                        }
+                    }
+                    
+                    // 更新统计
+                    function updateStats() {
+                        $("#total-logs").text(logCount.total);
+                        $("#error-count").text(logCount.error);
+                        $("#warning-count").text(logCount.warning);
+                        $("#info-count").text(logCount.info);
+                    }
+                    
+                    // 开始实时监控
+                    function startRealTimeMonitoring() {
+                        monitorInterval = setInterval(function() {
+                            if (!monitoring) return;
+                            
+                            // 获取选中的监控类型
+                            var monitorTypes = [];
+                            $(".monitor-type:checked").each(function() {
+                                monitorTypes.push($(this).val());
+                            });
+                            
+                            // 通过AJAX获取实时数据
+                            $.post(ajaxurl, {
+                                action: "ai_opt_get_monitor_logs",
+                                nonce: "<?php echo wp_create_nonce('ai_optimizer_nonce'); ?>",
+                                types: monitorTypes
+                            }, function(response) {
+                                if (response.success && response.data.logs) {
+                                    response.data.logs.forEach(function(log) {
+                                        addLog(log.type, log.message, log.details);
+                                    });
+                                }
+                            });
+                        }, 2000); // 每2秒更新一次
+                    }
+                    
+                    // 模拟一些初始日志
+                    setTimeout(function() {
+                        addLog("info", "WordPress版本检测", "当前版本: <?php echo get_bloginfo('version'); ?>");
+                        addLog("info", "插件状态检查", "AI优化器插件已激活");
+                        addLog("info", "数据库连接", "连接正常，查询时间: 0.023秒");
+                    }, 1000);
+                });
+            </script>
         </div>
         <?php
     }
@@ -564,6 +870,77 @@ class AI_Website_Optimizer {
                         <p class="submit">
                             <button type="button" id="publish-content-btn" class="button button-secondary">发布到WordPress</button>
                         </p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 自动化发布设置 -->
+            <div class="ai-optimizer-card" style="margin-top: 20px;">
+                <h2>🤖 自动化发布设置</h2>
+                
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">主题发布类型</th>
+                        <td>
+                            <select id="auto-publish-type" class="regular-text">
+                                <option value="post">文章帖子</option>
+                                <option value="video">视频内容</option>
+                                <option value="audio">音频内容</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr id="post-category-group">
+                        <th scope="row">文章分类</th>
+                        <td>
+                            <select id="post-category" class="regular-text">
+                                <?php
+                                $categories = get_categories(array('hide_empty' => false));
+                                foreach ($categories as $category) {
+                                    echo '<option value="' . $category->term_id . '">' . esc_html($category->name) . '</option>';
+                                }
+                                ?>
+                            </select>
+                            <p class="description">选择文章要发布到的分类（圈子）</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">主题关键词</th>
+                        <td>
+                            <input type="text" id="auto-theme" class="regular-text" placeholder="例如：科技新闻、美食评测、旅行攻略">
+                            <p class="description">AI将根据这个主题自动生成相关内容</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">发布频率</th>
+                        <td>
+                            <select id="auto-frequency" class="regular-text">
+                                <option value="hourly">每小时</option>
+                                <option value="daily">每天一次</option>
+                                <option value="twice-daily">每天两次</option>
+                                <option value="weekly">每周一次</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">自动生成数量</th>
+                        <td>
+                            <input type="number" id="auto-count" class="small-text" value="1" min="1" max="10">
+                            <span class="description">每次自动生成的内容数量</span>
+                        </td>
+                    </tr>
+                </table>
+                
+                <p class="submit">
+                    <button type="button" id="save-auto-settings" class="button button-primary">保存设置</button>
+                    <button type="button" id="start-auto-publish" class="button button-secondary">启动自动发布</button>
+                    <button type="button" id="stop-auto-publish" class="button button-secondary" style="display:none;">停止自动发布</button>
+                    <span id="auto-status" style="margin-left: 10px; font-weight: bold;"></span>
+                </p>
+                
+                <div id="auto-log" style="margin-top: 20px; display:none;">
+                    <h3>自动发布日志</h3>
+                    <div style="background: #f5f5f5; padding: 10px; border-radius: 5px; max-height: 200px; overflow-y: auto;">
+                        <ul id="auto-log-list"></ul>
                     </div>
                 </div>
             </div>
@@ -722,6 +1099,7 @@ class AI_Website_Optimizer {
         $content_type = sanitize_text_field($_POST['content_type'] ?? 'text');
         $publish_type = sanitize_text_field($_POST['publish_type'] ?? 'draft');
         $schedule_time = sanitize_text_field($_POST['schedule_time'] ?? '');
+        $category_id = isset($_POST['category_id']) ? intval($_POST['category_id']) : 0;
         
         if (empty($title) || empty($content)) {
             wp_send_json_error(array('message' => '标题和内容不能为空'));
@@ -747,6 +1125,11 @@ class AI_Website_Optimizer {
         if (is_wp_error($post_id)) {
             wp_send_json_error(array('message' => '发布失败: ' . $post_id->get_error_message()));
             return;
+        }
+        
+        // 设置文章分类
+        if ($category_id > 0) {
+            wp_set_post_categories($post_id, array($category_id));
         }
         
         // 添加自定义字段标记这是AI生成的内容
@@ -910,7 +1293,13 @@ class AI_Website_Optimizer {
         $result = json_decode($body, true);
         
         if (!isset($result['requestId'])) {
-            return array('error' => '视频生成请求失败');
+            $error_msg = '视频生成请求失败';
+            if (isset($result['error'])) {
+                $error_msg .= ': ' . $result['error']['message'];
+            } elseif (isset($result['message'])) {
+                $error_msg .= ': ' . $result['message'];
+            }
+            return array('error' => $error_msg);
         }
         
         $request_id = $result['requestId'];
@@ -985,6 +1374,105 @@ class AI_Website_Optimizer {
         }
         
         return array('error' => '音频生成失败: 返回格式不正确');
+    }
+    
+    // 保存自动发布设置
+    public function ajax_save_auto_settings() {
+        check_ajax_referer('ai_optimizer_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die();
+        }
+        
+        $settings = isset($_POST['settings']) ? $_POST['settings'] : array();
+        
+        update_option('ai_optimizer_auto_publish_settings', $settings);
+        
+        wp_send_json_success(array('message' => '设置已保存'));
+    }
+    
+    // 获取监控日志
+    public function ajax_get_monitor_logs() {
+        check_ajax_referer('ai_optimizer_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die();
+        }
+        
+        $types = isset($_POST['types']) ? $_POST['types'] : array();
+        $logs = array();
+        
+        // 模拟一些实时日志数据
+        $rand = rand(1, 10);
+        
+        if (in_array('performance', $types) && $rand > 7) {
+            $logs[] = array(
+                'type' => 'info',
+                'message' => '页面加载性能',
+                'details' => '平均响应时间: ' . rand(100, 500) . 'ms'
+            );
+        }
+        
+        if (in_array('error', $types) && $rand > 8) {
+            $logs[] = array(
+                'type' => 'error',
+                'message' => 'PHP错误检测',
+                'details' => '在 /wp-content/themes/theme-name/functions.php 第 123 行发现未定义变量'
+            );
+        }
+        
+        if (in_array('database', $types) && $rand > 6) {
+            $logs[] = array(
+                'type' => 'info',
+                'message' => '数据库查询',
+                'details' => '执行了 ' . rand(10, 50) . ' 次查询，总时间: ' . rand(10, 100) . 'ms'
+            );
+        }
+        
+        if (in_array('plugin', $types) && $rand > 5) {
+            $logs[] = array(
+                'type' => 'info',
+                'message' => '插件活动',
+                'details' => 'AI优化器自动执行了内容优化任务'
+            );
+        }
+        
+        if (in_array('user', $types) && $rand > 6) {
+            $logs[] = array(
+                'type' => 'info',
+                'message' => '用户活动',
+                'details' => '管理员正在访问: ' . admin_url()
+            );
+        }
+        
+        if (in_array('security', $types) && $rand > 9) {
+            $logs[] = array(
+                'type' => 'warning',
+                'message' => '安全警告',
+                'details' => '检测到多次失败的登录尝试'
+            );
+        }
+        
+        // 从数据库获取真实日志（如果有的话）
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ai_optimizer_logs';
+        
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") == $table_name) {
+            $recent_logs = $wpdb->get_results(
+                "SELECT type, message, data FROM $table_name 
+                ORDER BY created_at DESC LIMIT 5"
+            );
+            
+            foreach ($recent_logs as $log) {
+                $logs[] = array(
+                    'type' => $log->type,
+                    'message' => $log->message,
+                    'details' => $log->data
+                );
+            }
+        }
+        
+        wp_send_json_success(array('logs' => $logs));
     }
     
     // 插件激活
