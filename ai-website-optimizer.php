@@ -91,12 +91,17 @@ class AI_Website_Optimizer {
             .ai-optimizer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }
             .feature-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; }
             .feature-card h3 { margin-top: 0; color: #165DFF; }
+            #generation-result { background: #f0f8ff; border: 1px solid #165DFF; border-radius: 8px; padding: 20px; margin-top: 20px; }
+            #generation-result h3 { color: #165DFF; margin-top: 0; }
+            #result-content { background: white; padding: 15px; border-radius: 4px; margin-top: 10px; white-space: pre-wrap; }
             @media screen and (max-width: 768px) { .ai-optimizer-stats { flex-direction: column; } }
         ');
         
         // 内联JS
         wp_add_inline_script('jquery', '
             jQuery(document).ready(function($) {
+                var nonce = "' . wp_create_nonce('ai-opt-nonce') . '";
+                
                 // 测试API
                 $("#test-api-btn").click(function() {
                     var btn = $(this);
@@ -104,7 +109,7 @@ class AI_Website_Optimizer {
                     
                     $.post(ajaxurl, {
                         action: "ai_opt_test_api",
-                        nonce: "' . wp_create_nonce('ai-opt-nonce') . '"
+                        nonce: nonce
                     }, function(response) {
                         if (response.success) {
                             $("#test-result").html("<div class=\"notice notice-success\"><p>" + response.data.message + "</p></div>");
@@ -124,7 +129,7 @@ class AI_Website_Optimizer {
                     
                     $.post(ajaxurl, {
                         action: "ai_opt_save_settings",
-                        nonce: "' . wp_create_nonce('ai-opt-nonce') . '",
+                        nonce: nonce,
                         api_key: $("#api_key").val(),
                         enable_monitoring: $("#enable_monitoring").is(":checked") ? 1 : 0,
                         enable_seo: $("#enable_seo").is(":checked") ? 1 : 0,
@@ -133,20 +138,85 @@ class AI_Website_Optimizer {
                         if (response.success) {
                             $(".wrap > h1").after("<div class=\"notice notice-success is-dismissible\"><p>设置已保存</p></div>");
                             setTimeout(function() { $(".notice.is-dismissible").fadeOut(); }, 3000);
+                        } else {
+                            $(".wrap > h1").after("<div class=\"notice notice-error is-dismissible\"><p>保存失败: " + (response.data.message || "未知错误") + "</p></div>");
                         }
                         btn.prop("disabled", false).val("保存设置");
                     });
+                });
+                
+                // AI内容生成
+                $("#generate-content-btn").click(function() {
+                    var btn = $(this);
+                    var contentType = $("#content_type").val();
+                    var prompt = $("#prompt").val();
+                    
+                    if (!prompt) {
+                        alert("请输入提示词");
+                        return;
+                    }
+                    
+                    btn.prop("disabled", true).text("生成中...");
+                    $("#generation-result").hide();
+                    
+                    $.post(ajaxurl, {
+                        action: "ai_opt_generate_content",
+                        nonce: nonce,
+                        content_type: contentType,
+                        prompt: prompt
+                    }, function(response) {
+                        if (response.success) {
+                            $("#generation-result").show();
+                            $("#result-content").html(response.data.content || response.data.message);
+                        } else {
+                            alert("生成失败: " + (response.data.message || "请检查API密钥是否配置正确"));
+                        }
+                        btn.prop("disabled", false).text("生成内容");
+                    }).fail(function() {
+                        alert("网络错误，请稍后重试");
+                        btn.prop("disabled", false).text("生成内容");
+                    });
+                });
+                
+                // SEO分析
+                $("#run-seo-analysis").click(function() {
+                    var btn = $(this);
+                    btn.prop("disabled", true).text("分析中...");
+                    
+                    $.post(ajaxurl, {
+                        action: "ai_opt_run_analysis",
+                        nonce: nonce
+                    }, function(response) {
+                        if (response.success) {
+                            alert("分析完成: " + response.data.message);
+                        } else {
+                            alert("分析失败: " + (response.data.message || "请检查API密钥"));
+                        }
+                        btn.prop("disabled", false).text("运行AI分析");
+                    });
+                });
+                
+                // 刷新监控数据
+                $("#refresh-monitor-data").click(function() {
+                    location.reload();
+                });
+                
+                // 导出报告
+                $("#export-report").click(function() {
+                    alert("报告导出功能正在开发中...");
                 });
                 
                 // 动画效果
                 $(".stat-value").each(function() {
                     var $this = $(this);
                     var value = parseInt($this.text());
-                    $this.text("0%");
-                    $({ counter: 0 }).animate({ counter: value }, {
-                        duration: 1000,
-                        step: function() { $this.text(Math.ceil(this.counter) + "%"); }
-                    });
+                    if (!isNaN(value)) {
+                        $this.text("0%");
+                        $({ counter: 0 }).animate({ counter: value }, {
+                            duration: 1000,
+                            step: function() { $this.text(Math.ceil(this.counter) + "%"); }
+                        });
+                    }
                 });
             });
         ');
@@ -259,8 +329,8 @@ class AI_Website_Optimizer {
                 </table>
                 
                 <p style="margin-top: 20px;">
-                    <button class="button button-primary">刷新数据</button>
-                    <button class="button">导出报告</button>
+                    <button class="button button-primary" id="refresh-monitor-data">刷新数据</button>
+                    <button class="button" id="export-report">导出报告</button>
                 </p>
             </div>
         </div>
@@ -298,7 +368,7 @@ class AI_Website_Optimizer {
                 </div>
                 
                 <p style="margin-top: 20px;">
-                    <button class="button button-primary" onclick="alert('AI分析功能开发中...')">运行AI分析</button>
+                    <button class="button button-primary" id="run-seo-analysis">运行AI分析</button>
                     <button class="button">查看历史报告</button>
                 </p>
             </div>
@@ -338,7 +408,7 @@ class AI_Website_Optimizer {
                     </table>
                     
                     <p class="submit">
-                        <button type="button" class="button button-primary" onclick="alert('需要配置API密钥后使用')">生成内容</button>
+                        <button type="button" class="button button-primary" id="generate-content-btn">生成内容</button>
                     </p>
                 </form>
                 
@@ -409,10 +479,31 @@ class AI_Website_Optimizer {
         $api_key = get_option('ai_optimizer_api_key');
         if (empty($api_key)) {
             wp_send_json_error(array('message' => '请先配置API密钥'));
+            return;
         }
         
-        // 测试API连接（这里可以添加实际的API测试）
-        wp_send_json_success(array('message' => 'API连接成功！'));
+        // 测试API连接
+        $url = 'https://api.siliconflow.cn/v1/models';
+        $args = array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key
+            ),
+            'timeout' => 10
+        );
+        
+        $response = wp_remote_get($url, $args);
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error(array('message' => '连接失败: ' . $response->get_error_message()));
+            return;
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code === 200) {
+            wp_send_json_success(array('message' => 'API连接成功！密钥有效。'));
+        } else {
+            wp_send_json_error(array('message' => 'API密钥无效或连接失败，状态码: ' . $code));
+        }
     }
     
     public function ajax_save_settings() {
@@ -437,7 +528,68 @@ class AI_Website_Optimizer {
     
     public function ajax_generate_content() {
         check_ajax_referer('ai-opt-nonce', 'nonce');
-        wp_send_json_success(array('message' => '内容生成功能开发中...'));
+        
+        $api_key = get_option('ai_optimizer_api_key');
+        if (empty($api_key)) {
+            wp_send_json_error(array('message' => '请先配置API密钥'));
+            return;
+        }
+        
+        $content_type = sanitize_text_field($_POST['content_type'] ?? 'text');
+        $prompt = sanitize_textarea_field($_POST['prompt'] ?? '');
+        
+        if (empty($prompt)) {
+            wp_send_json_error(array('message' => '请输入提示词'));
+            return;
+        }
+        
+        // 调用Siliconflow API生成内容
+        $response = $this->call_siliconflow_api($content_type, $prompt, $api_key);
+        
+        if ($response) {
+            wp_send_json_success(array(
+                'message' => '生成成功',
+                'content' => $response
+            ));
+        } else {
+            wp_send_json_error(array('message' => 'API调用失败，请检查网络连接'));
+        }
+    }
+    
+    private function call_siliconflow_api($type, $prompt, $api_key) {
+        $url = 'https://api.siliconflow.cn/v1/chat/completions';
+        
+        $data = array(
+            'model' => 'deepseek-ai/DeepSeek-V2.5',
+            'messages' => array(
+                array('role' => 'user', 'content' => $prompt)
+            ),
+            'stream' => false
+        );
+        
+        $args = array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($data),
+            'timeout' => 30
+        );
+        
+        $response = wp_remote_post($url, $args);
+        
+        if (is_wp_error($response)) {
+            return false;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $result = json_decode($body, true);
+        
+        if (isset($result['choices'][0]['message']['content'])) {
+            return $result['choices'][0]['message']['content'];
+        }
+        
+        return false;
     }
     
     // 插件激活
