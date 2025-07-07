@@ -1,10 +1,10 @@
 <?php
 /**
- * Plugin Name: AI Website Optimizer
+ * Plugin Name: AI智能网站优化器
  * Plugin URI: https://github.com/ai-website-optimizer
- * Description: AI-powered WordPress site monitoring and optimization plugin with Siliconflow API integration. Features real-time monitoring, SEO optimization, code analysis, and multimedia generation.
+ * Description: 集成Siliconflow API的AI智能WordPress网站监控与优化插件，具备实时监控、SEO优化、代码分析和多媒体生成功能。
  * Version: 1.0.0
- * Author: AI Website Optimizer Team
+ * Author: AI网站优化团队
  * Author URI: https://ai-website-optimizer.com
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -159,8 +159,8 @@ class AI_Website_Optimizer {
     public function admin_menu() {
         // Main menu
         add_menu_page(
-            __('AI Optimizer', 'ai-website-optimizer'),
-            __('AI Optimizer', 'ai-website-optimizer'),
+            __('AI智能优化器', 'ai-website-optimizer'),
+            __('AI智能优化器', 'ai-website-optimizer'),
             'manage_options',
             'ai-optimizer',
             array('AI_Optimizer_Dashboard', 'render'),
@@ -171,8 +171,8 @@ class AI_Website_Optimizer {
         // Submenu pages
         add_submenu_page(
             'ai-optimizer',
-            __('Dashboard', 'ai-website-optimizer'),
-            __('Dashboard', 'ai-website-optimizer'),
+            __('仪表盘', 'ai-website-optimizer'),
+            __('仪表盘', 'ai-website-optimizer'),
             'manage_options',
             'ai-optimizer',
             array('AI_Optimizer_Dashboard', 'render')
@@ -180,8 +180,8 @@ class AI_Website_Optimizer {
         
         add_submenu_page(
             'ai-optimizer',
-            __('Monitor', 'ai-website-optimizer'),
-            __('Monitor', 'ai-website-optimizer'),
+            __('性能监控', 'ai-website-optimizer'),
+            __('性能监控', 'ai-website-optimizer'),
             'manage_options',
             'ai-optimizer-monitor',
             array('AI_Optimizer_Monitor', 'render')
@@ -189,8 +189,8 @@ class AI_Website_Optimizer {
         
         add_submenu_page(
             'ai-optimizer',
-            __('SEO Optimization', 'ai-website-optimizer'),
-            __('SEO Optimization', 'ai-website-optimizer'),
+            __('SEO优化', 'ai-website-optimizer'),
+            __('SEO优化', 'ai-website-optimizer'),
             'manage_options',
             'ai-optimizer-seo',
             array('AI_Optimizer_SEO', 'render')
@@ -198,8 +198,8 @@ class AI_Website_Optimizer {
         
         add_submenu_page(
             'ai-optimizer',
-            __('AI Tools', 'ai-website-optimizer'),
-            __('AI Tools', 'ai-website-optimizer'),
+            __('AI工具', 'ai-website-optimizer'),
+            __('AI工具', 'ai-website-optimizer'),
             'manage_options',
             'ai-optimizer-ai-tools',
             array('AI_Optimizer_AI_Tools', 'render')
@@ -207,8 +207,8 @@ class AI_Website_Optimizer {
         
         add_submenu_page(
             'ai-optimizer',
-            __('Settings', 'ai-website-optimizer'),
-            __('Settings', 'ai-website-optimizer'),
+            __('插件设置', 'ai-website-optimizer'),
+            __('插件设置', 'ai-website-optimizer'),
             'manage_options',
             'ai-optimizer-settings',
             array('AI_Optimizer_Settings', 'render')

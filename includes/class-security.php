@@ -1,6 +1,6 @@
 <?php
 /**
- * Security class for encryption, authentication, and access control
+ * 安全管理类
  */
 
 if (!defined('ABSPATH')) {
@@ -10,7 +10,6 @@ if (!defined('ABSPATH')) {
 class AI_Optimizer_Security {
     
     private static $instance = null;
-    private $encryption_key;
     
     public static function get_instance() {
         if (null === self::$instance) {
@@ -24,340 +23,80 @@ class AI_Optimizer_Security {
     }
     
     private function init() {
-        $this->encryption_key = $this->get_encryption_key();
+        // 安全检查钩子
+        add_action('init', array($this, 'security_init'));
+        add_action('wp_login', array($this, 'track_login'));
+        add_action('wp_login_failed', array($this, 'track_failed_login'));
         
-        // Security hooks
-        add_action('init', array($this, 'security_headers'));
-        add_action('wp_login_failed', array($this, 'log_failed_login'));
-        add_action('wp_login', array($this, 'log_successful_login'), 10, 2);
+        // 前端安全
+        add_action('template_redirect', array($this, 'check_rate_limits'));
         
-        // Rate limiting
-        add_action('wp_ajax_ai_optimizer_action', array($this, 'check_rate_limit'), 1);
-        add_action('wp_ajax_nopriv_ai_optimizer_action', array($this, 'check_rate_limit'), 1);
+        // AJAX安全检查
+        add_action('wp_ajax_nopriv_ai_optimizer_track', array($this, 'track_frontend_data'));
+        add_action('wp_ajax_ai_optimizer_track', array($this, 'track_frontend_data'));
     }
     
     /**
-     * Add security headers
+     * 安全初始化
      */
-    public function security_headers() {
-        if (!headers_sent()) {
-            header('X-Content-Type-Options: nosniff');
-            header('X-Frame-Options: SAMEORIGIN');
-            header('X-XSS-Protection: 1; mode=block');
-            header('Referrer-Policy: strict-origin-when-cross-origin');
-        }
+    public function security_init() {
+        // 移除不必要的头信息
+        remove_action('wp_head', 'wp_generator');
+        remove_action('wp_head', 'wlwmanifest_link');
+        remove_action('wp_head', 'rsd_link');
+        
+        // 限制登录尝试次数
+        $this->limit_login_attempts();
     }
     
     /**
-     * Encrypt sensitive data
-     */
-    public static function encrypt($data) {
-        if (empty($data)) {
-            return '';
-        }
-        
-        $instance = self::get_instance();
-        
-        if (!extension_loaded('openssl')) {
-            AI_Optimizer_Utils::log('OpenSSL not available for encryption', 'warning');
-            return base64_encode($data); // Fallback to base64 encoding
-        }
-        
-        $cipher = 'AES-256-CBC';
-        $iv = openssl_random_pseudo_bytes(openssl_cipher_iv_length($cipher));
-        
-        $encrypted = openssl_encrypt($data, $cipher, $instance->encryption_key, 0, $iv);
-        
-        if ($encrypted === false) {
-            AI_Optimizer_Utils::log('Encryption failed', 'error');
-            return '';
-        }
-        
-        return base64_encode($iv . $encrypted);
-    }
-    
-    /**
-     * Decrypt sensitive data
-     */
-    public static function decrypt($encrypted_data) {
-        if (empty($encrypted_data)) {
-            return '';
-        }
-        
-        $instance = self::get_instance();
-        
-        if (!extension_loaded('openssl')) {
-            AI_Optimizer_Utils::log('OpenSSL not available for decryption', 'warning');
-            return base64_decode($encrypted_data); // Fallback from base64 encoding
-        }
-        
-        $data = base64_decode($encrypted_data);
-        
-        if ($data === false) {
-            return '';
-        }
-        
-        $cipher = 'AES-256-CBC';
-        $iv_length = openssl_cipher_iv_length($cipher);
-        
-        if (strlen($data) < $iv_length) {
-            return '';
-        }
-        
-        $iv = substr($data, 0, $iv_length);
-        $encrypted = substr($data, $iv_length);
-        
-        $decrypted = openssl_decrypt($encrypted, $cipher, $instance->encryption_key, 0, $iv);
-        
-        if ($decrypted === false) {
-            AI_Optimizer_Utils::log('Decryption failed', 'error');
-            return '';
-        }
-        
-        return $decrypted;
-    }
-    
-    /**
-     * Get or generate encryption key
-     */
-    private function get_encryption_key() {
-        $key = get_option('ai_optimizer_encryption_key');
-        
-        if (empty($key)) {
-            $key = $this->generate_encryption_key();
-            update_option('ai_optimizer_encryption_key', $key);
-        }
-        
-        return $key;
-    }
-    
-    /**
-     * Generate encryption key
-     */
-    private function generate_encryption_key() {
-        if (function_exists('random_bytes')) {
-            try {
-                return base64_encode(random_bytes(32));
-            } catch (Exception $e) {
-                AI_Optimizer_Utils::log('Failed to generate random bytes', 'warning');
-            }
-        }
-        
-        // Fallback method
-        return base64_encode(wp_generate_password(32, true, true));
-    }
-    
-    /**
-     * Hash password with salt
-     */
-    public static function hash_password($password, $salt = null) {
-        if ($salt === null) {
-            $salt = wp_generate_password(16, true, true);
-        }
-        
-        return hash('sha256', $password . $salt) . ':' . $salt;
-    }
-    
-    /**
-     * Verify password hash
-     */
-    public static function verify_password($password, $hash) {
-        $parts = explode(':', $hash);
-        
-        if (count($parts) !== 2) {
-            return false;
-        }
-        
-        $stored_hash = $parts[0];
-        $salt = $parts[1];
-        
-        $test_hash = hash('sha256', $password . $salt);
-        
-        return hash_equals($stored_hash, $test_hash);
-    }
-    
-    /**
-     * Generate secure token
-     */
-    public static function generate_token($length = 32) {
-        return AI_Optimizer_Utils::generate_random_string($length);
-    }
-    
-    /**
-     * Validate nonce with custom action
+     * 验证nonce
      */
     public static function verify_nonce($nonce, $action = 'ai_optimizer_nonce') {
         return wp_verify_nonce($nonce, $action);
     }
     
     /**
-     * Check user permissions for specific action
+     * 检查用户权限
      */
-    public static function check_permission($action, $user_id = null) {
-        if ($user_id === null) {
-            $user_id = get_current_user_id();
+    public static function check_permission($capability = 'manage_options') {
+        return current_user_can($capability);
+    }
+    
+    /**
+     * 清理用户输入
+     */
+    public static function sanitize_input($input, $type = 'text') {
+        switch ($type) {
+            case 'email':
+                return sanitize_email($input);
+            case 'url':
+                return esc_url_raw($input);
+            case 'textarea':
+                return sanitize_textarea_field($input);
+            case 'html':
+                return wp_kses_post($input);
+            case 'int':
+                return intval($input);
+            case 'float':
+                return floatval($input);
+            case 'array':
+                return array_map('sanitize_text_field', (array)$input);
+            default:
+                return sanitize_text_field($input);
         }
-        
-        if (!$user_id) {
+    }
+    
+    /**
+     * 验证API密钥
+     */
+    public static function validate_api_key($api_key) {
+        if (empty($api_key)) {
             return false;
         }
         
-        $permissions = array(
-            'view_dashboard' => 'read',
-            'run_analysis' => 'edit_posts',
-            'apply_optimizations' => 'manage_options',
-            'manage_settings' => 'manage_options',
-            'generate_content' => 'edit_posts',
-            'access_logs' => 'manage_options'
-        );
-        
-        $required_capability = $permissions[$action] ?? 'manage_options';
-        
-        return user_can($user_id, $required_capability);
-    }
-    
-    /**
-     * Rate limiting check
-     */
-    public function check_rate_limit() {
-        $user_ip = AI_Optimizer_Utils::get_client_ip();
-        $user_id = get_current_user_id();
-        
-        $rate_limit = AI_Optimizer_Settings::get('rate_limit', 60);
-        $window = 60; // 1 minute window
-        
-        $cache_key = 'ai_optimizer_rate_limit_' . ($user_id ? $user_id : $user_ip);
-        $requests = get_transient($cache_key) ?: array();
-        
-        $current_time = time();
-        $window_start = $current_time - $window;
-        
-        // Clean old requests
-        $requests = array_filter($requests, function($timestamp) use ($window_start) {
-            return $timestamp > $window_start;
-        });
-        
-        if (count($requests) >= $rate_limit) {
-            AI_Optimizer_Utils::log('Rate limit exceeded', 'warning', array(
-                'user_ip' => $user_ip,
-                'user_id' => $user_id,
-                'requests_count' => count($requests)
-            ));
-            
-            wp_die(__('Rate limit exceeded. Please try again later.', 'ai-website-optimizer'), 429);
-        }
-        
-        // Add current request
-        $requests[] = $current_time;
-        set_transient($cache_key, $requests, $window);
-    }
-    
-    /**
-     * Log failed login attempts
-     */
-    public function log_failed_login($username) {
-        AI_Optimizer_Utils::log('Failed login attempt', 'warning', array(
-            'username' => $username,
-            'ip_address' => AI_Optimizer_Utils::get_client_ip(),
-            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? ''
-        ));
-    }
-    
-    /**
-     * Log successful login
-     */
-    public function log_successful_login($user_login, $user) {
-        AI_Optimizer_Utils::log('Successful login', 'info', array(
-            'user_id' => $user->ID,
-            'username' => $user_login,
-            'ip_address' => AI_Optimizer_Utils::get_client_ip()
-        ));
-    }
-    
-    /**
-     * Sanitize file upload
-     */
-    public static function sanitize_upload($file) {
-        // Check file type
-        $allowed_types = array('json', 'txt', 'csv');
-        $file_extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-        
-        if (!in_array(strtolower($file_extension), $allowed_types)) {
-            return new WP_Error('invalid_file_type', __('Invalid file type.', 'ai-website-optimizer'));
-        }
-        
-        // Check file size (max 10MB)
-        $max_size = 10 * 1024 * 1024;
-        if ($file['size'] > $max_size) {
-            return new WP_Error('file_too_large', __('File too large.', 'ai-website-optimizer'));
-        }
-        
-        // Sanitize filename
-        $file['name'] = sanitize_file_name($file['name']);
-        
-        return $file;
-    }
-    
-    /**
-     * Scan uploaded file for malicious content
-     */
-    public static function scan_file_content($file_path) {
-        if (!file_exists($file_path)) {
-            return false;
-        }
-        
-        $content = file_get_contents($file_path);
-        
-        // Check for suspicious patterns
-        $suspicious_patterns = array(
-            '/<\?php/',
-            '/<script/',
-            '/eval\s*\(/',
-            '/exec\s*\(/',
-            '/system\s*\(/',
-            '/shell_exec\s*\(/',
-            '/base64_decode\s*\(/',
-        );
-        
-        foreach ($suspicious_patterns as $pattern) {
-            if (preg_match($pattern, $content)) {
-                AI_Optimizer_Utils::log('Suspicious content detected in uploaded file', 'error', array(
-                    'file' => $file_path,
-                    'pattern' => $pattern
-                ));
-                return false;
-            }
-        }
-        
-        return true;
-    }
-    
-    /**
-     * Validate API request signature (if implemented)
-     */
-    public static function validate_api_signature($payload, $signature, $secret) {
-        $expected_signature = hash_hmac('sha256', $payload, $secret);
-        return hash_equals($expected_signature, $signature);
-    }
-    
-    /**
-     * Generate CSRF token
-     */
-    public static function generate_csrf_token() {
-        $token = self::generate_token();
-        set_transient('ai_optimizer_csrf_' . $token, true, 3600); // 1 hour expiry
-        return $token;
-    }
-    
-    /**
-     * Verify CSRF token
-     */
-    public static function verify_csrf_token($token) {
-        $key = 'ai_optimizer_csrf_' . $token;
-        $valid = get_transient($key);
-        
-        if ($valid) {
-            delete_transient($key); // Single use token
+        // Siliconflow API密钥格式验证
+        if (strpos($api_key, 'sk-') === 0 && strlen($api_key) >= 20) {
             return true;
         }
         
@@ -365,188 +104,376 @@ class AI_Optimizer_Security {
     }
     
     /**
-     * Secure session management
+     * 加密敏感数据
      */
-    public static function start_secure_session() {
-        if (session_status() === PHP_SESSION_NONE) {
-            // Configure secure session parameters
-            ini_set('session.cookie_httponly', 1);
-            ini_set('session.use_only_cookies', 1);
-            ini_set('session.cookie_secure', is_ssl() ? 1 : 0);
-            
-            session_start();
-        }
-    }
-    
-    /**
-     * Input validation and sanitization
-     */
-    public static function validate_input($input, $rules) {
-        $errors = array();
-        $sanitized = array();
-        
-        foreach ($rules as $field => $rule) {
-            $value = $input[$field] ?? null;
-            
-            // Required field check
-            if (isset($rule['required']) && $rule['required'] && empty($value)) {
-                $errors[$field] = sprintf(__('%s is required.', 'ai-website-optimizer'), $rule['label'] ?? $field);
-                continue;
-            }
-            
-            // Skip validation if field is empty and not required
-            if (empty($value)) {
-                $sanitized[$field] = '';
-                continue;
-            }
-            
-            // Type validation and sanitization
-            switch ($rule['type']) {
-                case 'email':
-                    if (!is_email($value)) {
-                        $errors[$field] = sprintf(__('%s must be a valid email address.', 'ai-website-optimizer'), $rule['label'] ?? $field);
-                    } else {
-                        $sanitized[$field] = sanitize_email($value);
-                    }
-                    break;
-                    
-                case 'url':
-                    if (!filter_var($value, FILTER_VALIDATE_URL)) {
-                        $errors[$field] = sprintf(__('%s must be a valid URL.', 'ai-website-optimizer'), $rule['label'] ?? $field);
-                    } else {
-                        $sanitized[$field] = esc_url_raw($value);
-                    }
-                    break;
-                    
-                case 'int':
-                    if (!is_numeric($value)) {
-                        $errors[$field] = sprintf(__('%s must be a number.', 'ai-website-optimizer'), $rule['label'] ?? $field);
-                    } else {
-                        $int_value = intval($value);
-                        
-                        if (isset($rule['min']) && $int_value < $rule['min']) {
-                            $errors[$field] = sprintf(__('%s must be at least %d.', 'ai-website-optimizer'), $rule['label'] ?? $field, $rule['min']);
-                        } elseif (isset($rule['max']) && $int_value > $rule['max']) {
-                            $errors[$field] = sprintf(__('%s must be no more than %d.', 'ai-website-optimizer'), $rule['label'] ?? $field, $rule['max']);
-                        } else {
-                            $sanitized[$field] = $int_value;
-                        }
-                    }
-                    break;
-                    
-                case 'text':
-                    $sanitized_value = sanitize_text_field($value);
-                    
-                    if (isset($rule['min_length']) && strlen($sanitized_value) < $rule['min_length']) {
-                        $errors[$field] = sprintf(__('%s must be at least %d characters long.', 'ai-website-optimizer'), $rule['label'] ?? $field, $rule['min_length']);
-                    } elseif (isset($rule['max_length']) && strlen($sanitized_value) > $rule['max_length']) {
-                        $errors[$field] = sprintf(__('%s must be no more than %d characters long.', 'ai-website-optimizer'), $rule['label'] ?? $field, $rule['max_length']);
-                    } else {
-                        $sanitized[$field] = $sanitized_value;
-                    }
-                    break;
-                    
-                case 'textarea':
-                    $sanitized[$field] = sanitize_textarea_field($value);
-                    break;
-                    
-                case 'api_key':
-                    if (!AI_Optimizer_Utils::validate_api_key($value)) {
-                        $errors[$field] = sprintf(__('%s is not a valid API key format.', 'ai-website-optimizer'), $rule['label'] ?? $field);
-                    } else {
-                        $sanitized[$field] = sanitize_text_field($value);
-                    }
-                    break;
-                    
-                default:
-                    $sanitized[$field] = sanitize_text_field($value);
-            }
+    public static function encrypt_data($data) {
+        if (!function_exists('openssl_encrypt')) {
+            return base64_encode($data);
         }
         
-        return array(
-            'errors' => $errors,
-            'data' => $sanitized,
-            'valid' => empty($errors)
-        );
-    }
-    
-    /**
-     * Log security events
-     */
-    public static function log_security_event($event, $level = 'warning', $context = array()) {
-        $context['security_event'] = true;
-        $context['ip_address'] = AI_Optimizer_Utils::get_client_ip();
-        $context['user_agent'] = $_SERVER['HTTP_USER_AGENT'] ?? '';
+        $key = self::get_encryption_key();
+        $iv = openssl_random_pseudo_bytes(16);
+        $encrypted = openssl_encrypt($data, 'AES-256-CBC', $key, 0, $iv);
         
-        AI_Optimizer_Utils::log($event, $level, $context);
+        return base64_encode($iv . $encrypted);
     }
     
     /**
-     * Check for suspicious activity
+     * 解密敏感数据
      */
-    public function check_suspicious_activity() {
+    public static function decrypt_data($encrypted_data) {
+        if (!function_exists('openssl_decrypt')) {
+            return base64_decode($encrypted_data);
+        }
+        
+        $data = base64_decode($encrypted_data);
+        $key = self::get_encryption_key();
+        $iv = substr($data, 0, 16);
+        $encrypted = substr($data, 16);
+        
+        return openssl_decrypt($encrypted, 'AES-256-CBC', $key, 0, $iv);
+    }
+    
+    /**
+     * 获取加密密钥
+     */
+    private static function get_encryption_key() {
+        $key = get_option('ai_optimizer_encryption_key');
+        
+        if (!$key) {
+            $key = wp_generate_password(64, true, true);
+            update_option('ai_optimizer_encryption_key', $key);
+        }
+        
+        return hash('sha256', $key . AUTH_KEY);
+    }
+    
+    /**
+     * 限制登录尝试
+     */
+    private function limit_login_attempts() {
+        $max_attempts = 5;
+        $lockout_duration = 30 * 60; // 30分钟
+        
         $ip = AI_Optimizer_Utils::get_client_ip();
-        $cache_key = 'ai_optimizer_suspicious_' . $ip;
+        $attempts_key = 'ai_optimizer_login_attempts_' . md5($ip);
+        $lockout_key = 'ai_optimizer_lockout_' . md5($ip);
         
-        $activity = get_transient($cache_key) ?: array(
-            'failed_logins' => 0,
-            'failed_requests' => 0,
-            'last_activity' => time()
-        );
+        // 检查是否被锁定
+        if (get_transient($lockout_key)) {
+            wp_die(__('由于多次登录失败，您的IP已被临时锁定。', 'ai-website-optimizer'));
+        }
+    }
+    
+    /**
+     * 跟踪登录成功
+     */
+    public function track_login($user_login) {
+        $ip = AI_Optimizer_Utils::get_client_ip();
         
-        // Check if IP should be blocked
-        if ($activity['failed_logins'] > 5 || $activity['failed_requests'] > 20) {
-            self::log_security_event('Suspicious activity detected', 'error', array(
-                'ip' => $ip,
-                'failed_logins' => $activity['failed_logins'],
-                'failed_requests' => $activity['failed_requests']
+        // 清除失败记录
+        delete_transient('ai_optimizer_login_attempts_' . md5($ip));
+        
+        AI_Optimizer_Utils::log('用户登录成功', 'info', array(
+            'user_login' => $user_login,
+            'ip_address' => $ip
+        ));
+    }
+    
+    /**
+     * 跟踪登录失败
+     */
+    public function track_failed_login($username) {
+        $ip = AI_Optimizer_Utils::get_client_ip();
+        $attempts_key = 'ai_optimizer_login_attempts_' . md5($ip);
+        $lockout_key = 'ai_optimizer_lockout_' . md5($ip);
+        
+        $attempts = get_transient($attempts_key) ?: 0;
+        $attempts++;
+        
+        set_transient($attempts_key, $attempts, 3600); // 1小时
+        
+        if ($attempts >= 5) {
+            set_transient($lockout_key, true, 1800); // 30分钟锁定
+            
+            AI_Optimizer_Utils::log('IP被锁定', 'warning', array(
+                'ip_address' => $ip,
+                'attempts' => $attempts,
+                'username' => $username
             ));
-            
-            // Block for 1 hour
-            set_transient('ai_optimizer_blocked_' . $ip, true, 3600);
-            
-            wp_die(__('Access blocked due to suspicious activity.', 'ai-website-optimizer'), 403);
+        } else {
+            AI_Optimizer_Utils::log('登录失败', 'warning', array(
+                'ip_address' => $ip,
+                'attempts' => $attempts,
+                'username' => $username
+            ));
         }
     }
     
     /**
-     * Check if IP is blocked
+     * 检查访问频率限制
      */
-    public function is_ip_blocked($ip = null) {
-        if ($ip === null) {
-            $ip = AI_Optimizer_Utils::get_client_ip();
+    public function check_rate_limits() {
+        if (!get_option('ai_optimizer_enable_rate_limiting', false)) {
+            return;
         }
         
-        return get_transient('ai_optimizer_blocked_' . $ip) === true;
+        $ip = AI_Optimizer_Utils::get_client_ip();
+        $rate_key = 'ai_optimizer_rate_' . md5($ip);
+        
+        $requests = get_transient($rate_key) ?: 0;
+        $max_requests = get_option('ai_optimizer_max_requests_per_minute', 60);
+        
+        if ($requests >= $max_requests) {
+            wp_die(__('请求过于频繁，请稍后再试。', 'ai-website-optimizer'), 429);
+        }
+        
+        set_transient($rate_key, $requests + 1, 60);
     }
     
     /**
-     * Clean up security data
+     * 跟踪前端数据
      */
-    public static function cleanup_security_data() {
+    public function track_frontend_data() {
+        // 验证nonce
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai_optimizer_frontend_nonce')) {
+            wp_die(__('安全检查失败', 'ai-website-optimizer'));
+        }
+        
+        $data_type = sanitize_text_field($_POST['type'] ?? '');
+        $data = $_POST['data'] ?? array();
+        
+        switch ($data_type) {
+            case 'performance':
+                $this->track_performance_data($data);
+                break;
+            case 'error':
+                $this->track_error_data($data);
+                break;
+            default:
+                wp_send_json_error(__('无效的数据类型', 'ai-website-optimizer'));
+        }
+        
+        wp_send_json_success();
+    }
+    
+    /**
+     * 跟踪性能数据
+     */
+    private function track_performance_data($data) {
         global $wpdb;
         
-        // Clean old rate limit data
-        $wpdb->query(
-            "DELETE FROM {$wpdb->options} 
-            WHERE option_name LIKE '_transient_ai_optimizer_rate_limit_%' 
-            OR option_name LIKE '_transient_timeout_ai_optimizer_rate_limit_%'"
+        $table_name = $wpdb->prefix . 'ai_optimizer_frontend_performance';
+        
+        $insert_data = array(
+            'url' => esc_url_raw($data['url'] ?? ''),
+            'page_load_time' => floatval($data['pageLoadTime'] ?? 0),
+            'dom_content_loaded' => floatval($data['domContentLoaded'] ?? 0),
+            'first_contentful_paint' => floatval($data['firstContentfulPaint'] ?? 0),
+            'largest_contentful_paint' => floatval($data['largestContentfulPaint'] ?? 0),
+            'cumulative_layout_shift' => floatval($data['cumulativeLayoutShift'] ?? 0),
+            'first_input_delay' => floatval($data['firstInputDelay'] ?? 0),
+            'user_agent' => sanitize_text_field($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            'viewport_width' => intval($data['viewportWidth'] ?? 0),
+            'viewport_height' => intval($data['viewportHeight'] ?? 0),
+            'connection_type' => sanitize_text_field($data['connectionType'] ?? ''),
+            'created_at' => current_time('mysql')
         );
         
-        // Clean old CSRF tokens
-        $wpdb->query(
-            "DELETE FROM {$wpdb->options} 
-            WHERE option_name LIKE '_transient_ai_optimizer_csrf_%' 
-            OR option_name LIKE '_transient_timeout_ai_optimizer_csrf_%'"
+        $wpdb->insert($table_name, $insert_data);
+    }
+    
+    /**
+     * 跟踪错误数据
+     */
+    private function track_error_data($data) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'ai_optimizer_frontend_errors';
+        
+        $insert_data = array(
+            'url' => esc_url_raw($data['url'] ?? ''),
+            'error_message' => sanitize_text_field($data['message'] ?? ''),
+            'error_stack' => sanitize_textarea_field($data['stack'] ?? ''),
+            'line_number' => intval($data['lineno'] ?? 0),
+            'column_number' => intval($data['colno'] ?? 0),
+            'filename' => sanitize_text_field($data['filename'] ?? ''),
+            'user_agent' => sanitize_text_field($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            'browser_info' => wp_json_encode($data['browserInfo'] ?? array()),
+            'created_at' => current_time('mysql')
         );
         
-        // Clean old blocked IPs
-        $wpdb->query(
-            "DELETE FROM {$wpdb->options} 
-            WHERE option_name LIKE '_transient_ai_optimizer_blocked_%' 
-            OR option_name LIKE '_transient_timeout_ai_optimizer_blocked_%'"
+        $wpdb->insert($table_name, $insert_data);
+    }
+    
+    /**
+     * 验证文件上传
+     */
+    public static function validate_file_upload($file) {
+        $allowed_types = array('jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx');
+        $max_size = 10 * 1024 * 1024; // 10MB
+        
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            return array('success' => false, 'message' => '文件上传失败');
+        }
+        
+        if ($file['size'] > $max_size) {
+            return array('success' => false, 'message' => '文件大小超过限制');
+        }
+        
+        $file_extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        if (!in_array($file_extension, $allowed_types)) {
+            return array('success' => false, 'message' => '不支持的文件类型');
+        }
+        
+        return array('success' => true);
+    }
+    
+    /**
+     * 生成安全令牌
+     */
+    public static function generate_token($length = 32) {
+        return bin2hex(random_bytes($length / 2));
+    }
+    
+    /**
+     * 验证令牌
+     */
+    public static function verify_token($token, $stored_token) {
+        return hash_equals($stored_token, $token);
+    }
+    
+    /**
+     * 获取安全报告
+     */
+    public function get_security_report() {
+        global $wpdb;
+        
+        $report = array();
+        
+        // 登录失败统计
+        $failed_logins = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}ai_optimizer_logs 
+             WHERE level = 'warning' AND message LIKE '%登录失败%' 
+             AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"
         );
         
-        AI_Optimizer_Utils::log('Security data cleanup completed', 'info');
+        // 被锁定的IP数量
+        $locked_ips = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}ai_optimizer_logs 
+             WHERE level = 'warning' AND message LIKE '%IP被锁定%' 
+             AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"
+        );
+        
+        // 异常访问统计
+        $suspicious_activity = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}ai_optimizer_frontend_errors 
+             WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"
+        );
+        
+        $report = array(
+            'failed_logins_24h' => intval($failed_logins),
+            'locked_ips_24h' => intval($locked_ips),
+            'frontend_errors_24h' => intval($suspicious_activity),
+            'security_level' => $this->calculate_security_level($failed_logins, $locked_ips, $suspicious_activity),
+            'recommendations' => $this->get_security_recommendations()
+        );
+        
+        return $report;
+    }
+    
+    /**
+     * 计算安全等级
+     */
+    private function calculate_security_level($failed_logins, $locked_ips, $errors) {
+        $score = 100;
+        
+        // 根据各种安全指标降低分数
+        $score -= min($failed_logins * 2, 30);
+        $score -= min($locked_ips * 5, 25);
+        $score -= min($errors * 0.5, 20);
+        
+        if ($score >= 90) return 'excellent';
+        if ($score >= 75) return 'good';
+        if ($score >= 60) return 'fair';
+        return 'poor';
+    }
+    
+    /**
+     * 获取安全建议
+     */
+    private function get_security_recommendations() {
+        $recommendations = array();
+        
+        // 检查SSL
+        if (!is_ssl()) {
+            $recommendations[] = '建议启用SSL证书以加密数据传输';
+        }
+        
+        // 检查WordPress版本
+        if (version_compare(get_bloginfo('version'), '6.0', '<')) {
+            $recommendations[] = '建议更新WordPress到最新版本';
+        }
+        
+        // 检查插件更新
+        $outdated_plugins = get_site_transient('update_plugins');
+        if (!empty($outdated_plugins->plugins)) {
+            $recommendations[] = '有插件需要更新，建议及时更新';
+        }
+        
+        // 检查强密码策略
+        if (!get_option('ai_optimizer_enforce_strong_passwords', false)) {
+            $recommendations[] = '建议启用强密码策略';
+        }
+        
+        return $recommendations;
+    }
+    
+    /**
+     * 清理安全日志
+     */
+    public function cleanup_security_logs($days = 30) {
+        global $wpdb;
+        
+        $cutoff_date = date('Y-m-d H:i:s', strtotime("-$days days"));
+        
+        $cleaned = $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->prefix}ai_optimizer_logs 
+             WHERE level IN ('warning', 'error') AND created_at < %s",
+            $cutoff_date
+        ));
+        
+        return $cleaned;
+    }
+    
+    /**
+     * 检查文件完整性
+     */
+    public function check_file_integrity() {
+        $critical_files = array(
+            ABSPATH . 'wp-config.php',
+            ABSPATH . 'wp-settings.php',
+            ABSPATH . 'wp-load.php',
+            AI_OPTIMIZER_PLUGIN_PATH . 'ai-website-optimizer.php'
+        );
+        
+        $integrity_report = array();
+        
+        foreach ($critical_files as $file) {
+            if (file_exists($file)) {
+                $integrity_report[basename($file)] = array(
+                    'exists' => true,
+                    'size' => filesize($file),
+                    'modified' => filemtime($file),
+                    'hash' => md5_file($file)
+                );
+            } else {
+                $integrity_report[basename($file)] = array(
+                    'exists' => false
+                );
+            }
+        }
+        
+        return $integrity_report;
     }
 }
