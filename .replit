@@ -2,7 +2,7 @@ modules = ["php-8.2", "nodejs-20", "web", "python-3.11"]
 
 [nix]
 channel = "stable-24_05"
-packages = ["openssl", "postgresql"]
+packages = ["openssl", "postgresql", "php", "nginx"]
 
 [deployment]
 deploymentTarget = "autoscale"
