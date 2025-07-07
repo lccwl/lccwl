@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - AI Website Optimizer{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h3 mb-0">
+        <i class="fas fa-chart-line me-2 text-primary"></i>Dashboard
+    </h1>
+    <div class="btn-group" role="group">
+        <button type="button" class="btn btn-outline-primary" onclick="refreshData()">
+            <i class="fas fa-sync-alt me-1"></i>Refresh
+        </button>
+        <button type="button" class="btn btn-outline-success" onclick="exportData()">
+            <i class="fas fa-download me-1"></i>Export
+        </button>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-3 col-md-6 mb-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">Website Score</h5>
+                        <h2 class="mb-0">85%</h2>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-trophy fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-3">
+        <div class="card bg-success text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">Page Speed</h5>
+                        <h2 class="mb-0">1.2s</h2>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-tachometer-alt fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-3">
+        <div class="card bg-info text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">SEO Score</h5>
+                        <h2 class="mb-0">92</h2>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-search fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-3">
+        <div class="card bg-warning text-white">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h5 class="card-title">Content Generated</h5>
+                        <h2 class="mb-0">247</h2>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-magic fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-chart-area me-2"></i>Performance Metrics
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="performanceChart" width="400" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-exclamation-triangle me-2"></i>Recent Alerts
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning alert-sm">
+                    <strong>Performance:</strong> Page load time increased by 15%
+                    <small class="d-block text-muted">2 hours ago</small>
+                </div>
+                <div class="alert alert-info alert-sm">
+                    <strong>SEO:</strong> New optimization suggestion available
+                    <small class="d-block text-muted">4 hours ago</small>
+                </div>
+                <div class="alert alert-success alert-sm">
+                    <strong>Content:</strong> 5 new articles generated successfully
+                    <small class="d-block text-muted">6 hours ago</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-robot me-2"></i>AI Content Generation
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="contentType" class="form-label">Content Type</label>
+                    <select class="form-select" id="contentType">
+                        <option value="text">Text Content</option>
+                        <option value="image">Image</option>
+                        <option value="video">Video</option>
+                        <option value="audio">Audio</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label for="contentPrompt" class="form-label">Prompt</label>
+                    <textarea class="form-control" id="contentPrompt" rows="3" placeholder="Enter your content generation prompt..."></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="generateContent()">
+                    <i class="fas fa-magic me-2"></i>Generate Content
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-search me-2"></i>SEO Analysis
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="analyzeUrl" class="form-label">URL to Analyze</label>
+                    <input type="url" class="form-control" id="analyzeUrl" placeholder="https://example.com">
+                </div>
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="checkKeywords" checked>
+                        <label class="form-check-label" for="checkKeywords">
+                            Keyword Analysis
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="checkStructure" checked>
+                        <label class="form-check-label" for="checkStructure">
+                            Content Structure
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="checkTechnical" checked>
+                        <label class="form-check-label" for="checkTechnical">
+                            Technical SEO
+                        </label>
+                    </div>
+                </div>
+                <button class="btn btn-success" onclick="runSEOAnalysis()">
+                    <i class="fas fa-search me-2"></i>Analyze SEO
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="results-section" class="mt-4" style="display: none;">
+    <div class="card">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="fas fa-chart-pie me-2"></i>Analysis Results
+            </h5>
+        </div>
+        <div class="card-body">
+            <div id="results-content">
+                <!-- Results will be displayed here -->
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Performance Chart
+const ctx = document.getElementById('performanceChart').getContext('2d');
+const performanceChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+        datasets: [{
+            label: 'Page Load Time (s)',
+            data: [1.2, 1.1, 1.3, 1.0, 1.2, 1.1],
+            borderColor: 'rgb(75, 192, 192)',
+            backgroundColor: 'rgba(75, 192, 192, 0.1)',
+            tension: 0.1
+        }, {
+            label: 'SEO Score',
+            data: [85, 87, 89, 92, 91, 92],
+            borderColor: 'rgb(255, 99, 132)',
+            backgroundColor: 'rgba(255, 99, 132, 0.1)',
+            tension: 0.1
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: {
+                position: 'top',
+            },
+            title: {
+                display: true,
+                text: 'Website Performance Over Time'
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true
+            }
+        }
+    }
+});
+
+function refreshData() {
+    // Simulate data refresh
+    const newData = [
+        Math.random() * 2,
+        Math.random() * 2,
+        Math.random() * 2,
+        Math.random() * 2,
+        Math.random() * 2,
+        Math.random() * 2
+    ];
+    
+    performanceChart.data.datasets[0].data = newData;
+    performanceChart.update();
+    
+    // Show success message
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-success alert-dismissible fade show';
+    alert.innerHTML = `
+        <i class="fas fa-check me-2"></i>Data refreshed successfully!
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.querySelector('main').insertBefore(alert, document.querySelector('main').firstChild);
+}
+
+function exportData() {
+    // Simulate data export
+    const data = {
+        performance: performanceChart.data.datasets[0].data,
+        seo_scores: performanceChart.data.datasets[1].data,
+        timestamp: new Date().toISOString()
+    };
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'website-analytics-' + new Date().toISOString().split('T')[0] + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function generateContent() {
+    const contentType = document.getElementById('contentType').value;
+    const prompt = document.getElementById('contentPrompt').value;
+    
+    if (!prompt.trim()) {
+        alert('Please enter a prompt for content generation.');
+        return;
+    }
+    
+    // Show loading state
+    const button = event.target;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Generating...';
+    
+    // Simulate API call
+    setTimeout(() => {
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-magic me-2"></i>Generate Content';
+        
+        // Show results
+        document.getElementById('results-content').innerHTML = `
+            <div class="alert alert-success">
+                <h6><i class="fas fa-check me-2"></i>Content Generated Successfully!</h6>
+                <p><strong>Type:</strong> ${contentType}</p>
+                <p><strong>Prompt:</strong> ${prompt}</p>
+                <p><strong>Status:</strong> Ready for review</p>
+            </div>
+        `;
+        document.getElementById('results-section').style.display = 'block';
+    }, 3000);
+}
+
+function runSEOAnalysis() {
+    const url = document.getElementById('analyzeUrl').value;
+    
+    if (!url.trim()) {
+        alert('Please enter a URL to analyze.');
+        return;
+    }
+    
+    // Show loading state
+    const button = event.target;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Analyzing...';
+    
+    // Simulate API call
+    setTimeout(() => {
+        button.disabled = false;
+        button.innerHTML = '<i class="fas fa-search me-2"></i>Analyze SEO';
+        
+        // Show results
+        document.getElementById('results-content').innerHTML = `
+            <div class="alert alert-info">
+                <h6><i class="fas fa-search me-2"></i>SEO Analysis Complete!</h6>
+                <p><strong>URL:</strong> ${url}</p>
+                <div class="row mt-3">
+                    <div class="col-md-4">
+                        <div class="text-center">
+                            <h4 class="text-success">92</h4>
+                            <small>SEO Score</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="text-center">
+                            <h4 class="text-warning">3</h4>
+                            <small>Issues Found</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="text-center">
+                            <h4 class="text-info">12</h4>
+                            <small>Recommendations</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.getElementById('results-section').style.display = 'block';
+    }, 2000);
+}
+</script>
+{% endblock %}
