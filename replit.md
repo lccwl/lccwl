@@ -130,6 +130,12 @@ ai-website-optimizer/
     - 简化管理菜单实现，直接在主类中定义页面渲染函数
     - 添加错误处理和优雅降级机制
   - 创建基础CSS样式文件，美化管理界面
+  - 创建多个插件版本供测试：
+    - ai-optimizer-minimal.php - 最小测试版
+    - ai-website-optimizer-simplified.php - 简化功能版
+    - ai-website-optimizer-fixed.php - 完整修复版（推荐）
+  - 添加完整的JavaScript交互功能
+  - 创建详细的WordPress安装说明文档
 
 ## User Preferences
 
