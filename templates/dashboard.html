@@ -1,0 +1,345 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - AI Website Optimizer{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="h3 mb-3">
+                <i data-feather="home"></i>
+                Dashboard Overview
+            </h1>
+            <p class="text-muted">Monitor your website's performance, SEO optimization, and AI-powered enhancements</p>
+        </div>
+    </div>
+
+    <!-- Key Metrics Row -->
+    <div class="row mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="metric-card">
+                <div class="metric-value">{{ avg_load_time }}s</div>
+                <div class="metric-label">Avg Load Time</div>
+                <div class="mt-2">
+                    <span class="status-badge status-success">Optimal</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="metric-card">
+                <div class="metric-value">{{ avg_seo_score }}</div>
+                <div class="metric-label">SEO Score</div>
+                <div class="mt-2">
+                    <span class="status-badge status-success">Good</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="metric-card">
+                <div class="metric-value">{{ total_generations }}</div>
+                <div class="metric-label">AI Generations</div>
+                <div class="mt-2">
+                    <span class="status-badge status-success">Active</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="metric-card">
+                <div class="metric-value">99.9%</div>
+                <div class="metric-label">Uptime</div>
+                <div class="mt-2">
+                    <span class="status-badge status-success">Excellent</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="row mb-4">
+        <div class="col-lg-8 mb-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="trending-up"></i>
+                        Performance Trends
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="performanceChart" width="400" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4 mb-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="pie-chart"></i>
+                        SEO Health
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="seoChart" width="300" height="300"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Content Row -->
+    <div class="row">
+        <div class="col-lg-6 mb-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="activity"></i>
+                        Recent Monitoring Data
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_monitoring %}
+                        <div class="table-responsive">
+                            <table class="table table-dark table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>URL</th>
+                                        <th>Load Time</th>
+                                        <th>Memory</th>
+                                        <th>Time</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for data in recent_monitoring[:5] %}
+                                    <tr>
+                                        <td>
+                                            <div class="text-truncate" style="max-width: 200px;">
+                                                {{ data.url }}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="{% if data.load_time < 2 %}text-success{% elif data.load_time < 3 %}text-warning{% else %}text-danger{% endif %}">
+                                                {{ "%.2f"|format(data.load_time) }}s
+                                            </span>
+                                        </td>
+                                        <td>{{ "%.1f"|format(data.memory_usage) }}MB</td>
+                                        <td class="text-muted">{{ data.timestamp.strftime('%H:%M') }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i data-feather="bar-chart-2" class="text-muted" style="width: 48px; height: 48px;"></i>
+                            <p class="text-muted mt-2">No monitoring data available</p>
+                            <a href="{{ url_for('initialize_demo_data') }}" class="btn btn-primary btn-sm">
+                                Initialize Demo Data
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6 mb-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="search"></i>
+                        SEO Analysis Results
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if seo_analyses %}
+                        {% for analysis in seo_analyses[:3] %}
+                        <div class="d-flex justify-content-between align-items-center mb-3 p-3 rounded" style="background: rgba(22, 93, 255, 0.1); border-left: 4px solid var(--primary-color);">
+                            <div>
+                                <div class="fw-bold">{{ analysis.url }}</div>
+                                <small class="text-muted">{{ analysis.timestamp.strftime('%m/%d/%Y %H:%M') }}</small>
+                            </div>
+                            <div class="text-end">
+                                <div class="metric-value" style="font-size: 1.5rem;">{{ analysis.seo_score }}</div>
+                                <small class="text-muted">SEO Score</small>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i data-feather="search" class="text-muted" style="width: 48px; height: 48px;"></i>
+                            <p class="text-muted mt-2">No SEO analysis data available</p>
+                            <a href="{{ url_for('seo_optimization') }}" class="btn btn-primary btn-sm">
+                                Run SEO Analysis
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent AI Generations -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="cpu"></i>
+                        Recent AI Generations
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_generations %}
+                        <div class="row">
+                            {% for gen in recent_generations[:4] %}
+                            <div class="col-md-6 col-lg-3 mb-3">
+                                <div class="card h-100" style="background: rgba(126, 34, 206, 0.1); border: 1px solid var(--accent-color);">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span class="badge" style="background: var(--accent-color);">{{ gen.type.title() }}</span>
+                                            <span class="status-badge status-{{ 'success' if gen.status == 'completed' else 'warning' }}">
+                                                {{ gen.status.title() }}
+                                            </span>
+                                        </div>
+                                        <h6 class="card-title">{{ gen.prompt[:30] }}{% if gen.prompt|length > 30 %}...{% endif %}</h6>
+                                        <p class="card-text text-muted">{{ gen.timestamp.strftime('%m/%d/%Y %H:%M') }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i data-feather="cpu" class="text-muted" style="width: 48px; height: 48px;"></i>
+                            <p class="text-muted mt-2">No AI generations yet</p>
+                            <a href="{{ url_for('ai_tools') }}" class="btn btn-primary btn-sm">
+                                Start Creating
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Performance Chart
+const performanceCtx = document.getElementById('performanceChart').getContext('2d');
+new Chart(performanceCtx, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [{
+            label: 'Load Time (s)',
+            data: [],
+            borderColor: '#165DFF',
+            backgroundColor: 'rgba(22, 93, 255, 0.1)',
+            tension: 0.4,
+            fill: true
+        }, {
+            label: 'Memory Usage (MB)',
+            data: [],
+            borderColor: '#00F5D4',
+            backgroundColor: 'rgba(0, 245, 212, 0.1)',
+            tension: 0.4,
+            fill: true,
+            yAxisID: 'y1'
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: {
+                labels: {
+                    color: '#E2E8F0'
+                }
+            }
+        },
+        scales: {
+            x: {
+                grid: {
+                    color: '#334155'
+                },
+                ticks: {
+                    color: '#94A3B8'
+                }
+            },
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                grid: {
+                    color: '#334155'
+                },
+                ticks: {
+                    color: '#94A3B8'
+                }
+            },
+            y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                grid: {
+                    drawOnChartArea: false,
+                },
+                ticks: {
+                    color: '#94A3B8'
+                }
+            }
+        }
+    }
+});
+
+// SEO Health Chart
+const seoCtx = document.getElementById('seoChart').getContext('2d');
+new Chart(seoCtx, {
+    type: 'doughnut',
+    data: {
+        labels: ['Optimized', 'Needs Improvement', 'Critical'],
+        datasets: [{
+            data: [{{ avg_seo_score or 85 }}, {{ 100 - (avg_seo_score or 85) }}, 5],
+            backgroundColor: [
+                '#00F5D4',
+                '#165DFF',
+                '#7E22CE'
+            ],
+            borderWidth: 2,
+            borderColor: '#1A1D29'
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: {
+                    color: '#E2E8F0',
+                    padding: 20
+                }
+            }
+        }
+    }
+});
+
+// Load real performance data
+fetch('/api/monitoring-data')
+    .then(response => response.json())
+    .then(data => {
+        performanceCtx.chart.data.labels = data.labels;
+        performanceCtx.chart.data.datasets[0].data = data.load_times;
+        performanceCtx.chart.data.datasets[1].data = data.memory_usage;
+        performanceCtx.chart.update();
+    })
+    .catch(error => console.log('Chart data not available'));
+
+// Auto-refresh every 30 seconds
+setInterval(() => {
+    location.reload();
+}, 30000);
+
+// Initialize Feather icons after DOM load
+document.addEventListener('DOMContentLoaded', function() {
+    feather.replace();
+});
+</script>
+{% endblock %}

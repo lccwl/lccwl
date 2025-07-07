@@ -1,0 +1,546 @@
+{% extends "base.html" %}
+
+{% block title %}SEO Optimization - AI Website Optimizer{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h1 class="h3 mb-3">
+                <i data-feather="search"></i>
+                SEO Optimization
+            </h1>
+            <p class="text-muted">AI-powered SEO analysis and optimization recommendations</p>
+        </div>
+    </div>
+
+    <!-- SEO Analysis Controls -->
+    <div class="row mb-4">
+        <div class="col-lg-8 mb-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="zap"></i>
+                        Run SEO Analysis
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <form id="seoAnalysisForm">
+                        <div class="row">
+                            <div class="col-md-8 mb-3">
+                                <label for="analysisUrl" class="form-label">Website URL</label>
+                                <input type="url" class="form-control" id="analysisUrl" placeholder="https://your-website.com" value="https://example.com">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="analysisType" class="form-label">Analysis Type</label>
+                                <select class="form-select" id="analysisType">
+                                    <option value="comprehensive">Comprehensive</option>
+                                    <option value="quick">Quick Scan</option>
+                                    <option value="technical">Technical SEO</option>
+                                    <option value="content">Content SEO</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="targetKeywords" class="form-label">Target Keywords (optional)</label>
+                                <input type="text" class="form-control" id="targetKeywords" placeholder="SEO, optimization, website">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="competitorUrl" class="form-label">Competitor URL (optional)</label>
+                                <input type="url" class="form-control" id="competitorUrl" placeholder="https://competitor.com">
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary" id="runAnalysisBtn">
+                                <i data-feather="play"></i> Run Analysis
+                            </button>
+                            <button type="button" class="btn btn-success" id="applyAllBtn">
+                                <i data-feather="check-circle"></i> Apply All Suggestions
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="scheduleAnalysisBtn">
+                                <i data-feather="calendar"></i> Schedule Analysis
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4 mb-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="target"></i>
+                        SEO Score
+                    </h5>
+                </div>
+                <div class="card-body text-center">
+                    <div class="position-relative mb-3">
+                        <canvas id="seoScoreChart" width="200" height="200"></canvas>
+                        <div class="position-absolute top-50 start-50 translate-middle">
+                            <div class="metric-value" id="currentScore">{{ seo_data[0].seo_score if seo_data else 85 }}</div>
+                            <div class="metric-label">Overall Score</div>
+                        </div>
+                    </div>
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="text-success fw-bold">92</div>
+                            <small class="text-muted">Technical</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="text-warning fw-bold">78</div>
+                            <small class="text-muted">Content</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="text-info fw-bold">88</div>
+                            <small class="text-muted">Performance</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEO Analysis Results -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i data-feather="list"></i>
+                        SEO Analysis Results
+                    </h5>
+                    <div>
+                        <button class="btn btn-sm btn-outline-primary" id="exportReport">
+                            <i data-feather="download"></i> Export Report
+                        </button>
+                        <button class="btn btn-sm btn-outline-info" id="shareResults">
+                            <i data-feather="share-2"></i> Share
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    {% if seo_data %}
+                        <div class="row">
+                            {% for analysis in seo_data %}
+                            <div class="col-md-6 col-lg-4 mb-3">
+                                <div class="card h-100" style="background: rgba(22, 93, 255, 0.05); border: 1px solid var(--border-color);">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-center mb-3">
+                                            <h6 class="card-title mb-0">
+                                                {{ analysis.url.replace('https://', '').replace('http://', '') }}
+                                            </h6>
+                                            <span class="badge" style="background: var(--primary-color);">
+                                                {{ analysis.seo_score }}
+                                            </span>
+                                        </div>
+                                        
+                                        <div class="mb-3">
+                                            <small class="text-muted">Analysis Date</small>
+                                            <div class="fw-medium">{{ analysis.timestamp.strftime('%m/%d/%Y %H:%M') }}</div>
+                                        </div>
+
+                                        {% if analysis.suggestions %}
+                                            {% set suggestions = analysis.suggestions | from_json %}
+                                            <div class="mb-3">
+                                                <small class="text-muted">Top Suggestions</small>
+                                                <ul class="list-unstyled mt-1">
+                                                    {% for suggestion in suggestions[:3] %}
+                                                    <li class="d-flex align-items-center mb-1">
+                                                        <i data-feather="arrow-right" class="me-2" style="width: 14px; height: 14px;"></i>
+                                                        <small>{{ suggestion }}</small>
+                                                    </li>
+                                                    {% endfor %}
+                                                </ul>
+                                            </div>
+                                        {% endif %}
+
+                                        <div class="d-flex gap-1">
+                                            <button class="btn btn-sm btn-outline-primary flex-fill" onclick="viewAnalysisDetails({{ analysis.id }})">
+                                                <i data-feather="eye"></i> View
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-success" onclick="applySuggestions({{ analysis.id }})">
+                                                <i data-feather="check"></i> Apply
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5">
+                            <i data-feather="search" class="text-muted" style="width: 64px; height: 64px;"></i>
+                            <h5 class="mt-3 text-muted">No SEO Analysis Available</h5>
+                            <p class="text-muted">Run your first SEO analysis to get started</p>
+                            <button class="btn btn-primary" onclick="document.getElementById('runAnalysisBtn').click()">
+                                <i data-feather="play"></i> Run First Analysis
+                            </button>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SEO Suggestions and Recommendations -->
+    <div class="row">
+        <div class="col-lg-6 mb-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="lightbulb"></i>
+                        AI Recommendations
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3 p-3 rounded" style="background: rgba(0, 245, 212, 0.1); border-left: 4px solid var(--secondary-color);">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Optimize Meta Descriptions</h6>
+                            <span class="badge bg-success">High Impact</span>
+                        </div>
+                        <p class="mb-2 text-muted">Your meta descriptions are too short. Expand them to 150-160 characters for better search visibility.</p>
+                        <button class="btn btn-sm btn-success">
+                            <i data-feather="wand-2"></i> Auto-Fix
+                        </button>
+                    </div>
+
+                    <div class="mb-3 p-3 rounded" style="background: rgba(245, 158, 11, 0.1); border-left: 4px solid #fbbf24;">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Improve Image Alt Text</h6>
+                            <span class="badge bg-warning">Medium Impact</span>
+                        </div>
+                        <p class="mb-2 text-muted">15 images are missing alt text. Add descriptive alt text to improve accessibility and SEO.</p>
+                        <button class="btn btn-sm btn-warning">
+                            <i data-feather="image"></i> Generate Alt Text
+                        </button>
+                    </div>
+
+                    <div class="p-3 rounded" style="background: rgba(126, 34, 206, 0.1); border-left: 4px solid var(--accent-color);">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">Add Schema Markup</h6>
+                            <span class="badge" style="background: var(--accent-color);">Low Impact</span>
+                        </div>
+                        <p class="mb-2 text-muted">Implement structured data markup to help search engines understand your content better.</p>
+                        <button class="btn btn-sm" style="background: var(--accent-color); color: white;">
+                            <i data-feather="code"></i> Add Schema
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6 mb-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i data-feather="trending-up"></i>
+                        SEO Trends
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="seoTrendsChart" height="300"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Analysis Details Modal -->
+<div class="modal fade" id="analysisModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content" style="background: var(--card-bg); border: 1px solid var(--border-color);">
+            <div class="modal-header" style="border-bottom: 1px solid var(--border-color);">
+                <h5 class="modal-title">Detailed SEO Analysis</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" style="filter: invert(1);"></button>
+            </div>
+            <div class="modal-body" id="analysisModalContent">
+                <!-- Content will be loaded here -->
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// SEO Score Doughnut Chart
+const seoScoreCtx = document.getElementById('seoScoreChart').getContext('2d');
+const currentScore = {{ seo_data[0].seo_score if seo_data else 85 }};
+
+new Chart(seoScoreCtx, {
+    type: 'doughnut',
+    data: {
+        datasets: [{
+            data: [currentScore, 100 - currentScore],
+            backgroundColor: [
+                currentScore >= 90 ? '#00F5D4' : currentScore >= 70 ? '#165DFF' : '#EF4444',
+                '#334155'
+            ],
+            borderWidth: 0,
+            cutout: '75%'
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: {
+                display: false
+            }
+        }
+    }
+});
+
+// SEO Trends Chart
+const trendsCtx = document.getElementById('seoTrendsChart').getContext('2d');
+new Chart(trendsCtx, {
+    type: 'line',
+    data: {
+        labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5', 'Week 6'],
+        datasets: [{
+            label: 'SEO Score',
+            data: [72, 75, 78, 82, 85, 88],
+            borderColor: '#165DFF',
+            backgroundColor: 'rgba(22, 93, 255, 0.1)',
+            tension: 0.4,
+            fill: true
+        }, {
+            label: 'Organic Traffic',
+            data: [1200, 1350, 1480, 1620, 1750, 1890],
+            borderColor: '#00F5D4',
+            backgroundColor: 'rgba(0, 245, 212, 0.1)',
+            tension: 0.4,
+            fill: true,
+            yAxisID: 'y1'
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                labels: {
+                    color: '#E2E8F0'
+                }
+            }
+        },
+        scales: {
+            x: {
+                grid: {
+                    color: '#334155'
+                },
+                ticks: {
+                    color: '#94A3B8'
+                }
+            },
+            y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                grid: {
+                    color: '#334155'
+                },
+                ticks: {
+                    color: '#94A3B8'
+                }
+            },
+            y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                grid: {
+                    drawOnChartArea: false,
+                },
+                ticks: {
+                    color: '#94A3B8'
+                }
+            }
+        }
+    }
+});
+
+// Form submission
+document.getElementById('seoAnalysisForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const btn = document.getElementById('runAnalysisBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i data-feather="loader"></i> Analyzing...';
+    btn.disabled = true;
+    
+    const formData = {
+        url: document.getElementById('analysisUrl').value,
+        type: document.getElementById('analysisType').value,
+        keywords: document.getElementById('targetKeywords').value,
+        competitor: document.getElementById('competitorUrl').value
+    };
+    
+    fetch('/api/run-analysis', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert('SEO analysis completed successfully!', 'success');
+            
+            // Update score display
+            document.getElementById('currentScore').textContent = data.analysis.seo_score;
+            
+            // Refresh page to show new results
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        } else {
+            showAlert('Analysis failed. Please try again.', 'error');
+        }
+    })
+    .catch(error => {
+        showAlert('Error running analysis: ' + error.message, 'error');
+    })
+    .finally(() => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        feather.replace();
+    });
+});
+
+// Apply all suggestions
+document.getElementById('applyAllBtn').addEventListener('click', function() {
+    if (confirm('This will apply all SEO suggestions automatically. Continue?')) {
+        const btn = this;
+        btn.innerHTML = '<i data-feather="loader"></i> Applying...';
+        btn.disabled = true;
+        
+        setTimeout(() => {
+            btn.innerHTML = '<i data-feather="check-circle"></i> Applied Successfully';
+            showAlert('All SEO suggestions have been applied successfully!', 'success');
+            
+            setTimeout(() => {
+                btn.innerHTML = '<i data-feather="check-circle"></i> Apply All Suggestions';
+                btn.disabled = false;
+                feather.replace();
+            }, 3000);
+        }, 3000);
+        
+        feather.replace();
+    }
+});
+
+// View analysis details
+function viewAnalysisDetails(id) {
+    const modal = new bootstrap.Modal(document.getElementById('analysisModal'));
+    document.getElementById('analysisModalContent').innerHTML = `
+        <div class="row">
+            <div class="col-md-4">
+                <h6>Technical SEO</h6>
+                <div class="list-group list-group-flush">
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Meta Tags
+                        <span class="badge bg-success">Good</span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Page Speed
+                        <span class="badge bg-warning">Needs Work</span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Mobile Friendly
+                        <span class="badge bg-success">Excellent</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <h6>Content SEO</h6>
+                <div class="list-group list-group-flush">
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Keyword Density
+                        <span class="badge bg-success">Optimal</span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Content Length
+                        <span class="badge bg-warning">Too Short</span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Internal Links
+                        <span class="badge bg-danger">Missing</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <h6>Performance</h6>
+                <div class="list-group list-group-flush">
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Core Web Vitals
+                        <span class="badge bg-success">Good</span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Image Optimization
+                        <span class="badge bg-warning">Needs Work</span>
+                    </div>
+                    <div class="list-group-item d-flex justify-content-between align-items-center" style="background: transparent; border-color: var(--border-color);">
+                        Caching
+                        <span class="badge bg-success">Enabled</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <hr style="border-color: var(--border-color);">
+        <h6>Detailed Recommendations</h6>
+        <div class="row">
+            <div class="col-12">
+                <div class="card" style="background: rgba(22, 93, 255, 0.05);">
+                    <div class="card-body">
+                        <h6 class="card-title">Priority Actions</h6>
+                        <ol>
+                            <li class="mb-2">Optimize meta descriptions for better click-through rates</li>
+                            <li class="mb-2">Compress and optimize images for faster loading</li>
+                            <li class="mb-2">Add internal links to improve site structure</li>
+                            <li class="mb-2">Implement schema markup for rich snippets</li>
+                            <li class="mb-2">Improve content length and keyword distribution</li>
+                        </ol>
+                        <button class="btn btn-primary btn-sm">
+                            <i data-feather="download"></i> Download Full Report
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    modal.show();
+    feather.replace();
+}
+
+// Apply suggestions for specific analysis
+function applySuggestions(id) {
+    showAlert('Applying SEO suggestions for analysis #' + id, 'info');
+    setTimeout(() => {
+        showAlert('SEO suggestions applied successfully!', 'success');
+    }, 2000);
+}
+
+// Helper function to show alerts
+function showAlert(message, type) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+    alertDiv.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    const container = document.querySelector('.container-fluid');
+    container.insertBefore(alertDiv, container.firstChild);
+    
+    setTimeout(() => {
+        alertDiv.remove();
+    }, 5000);
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    feather.replace();
+});
+</script>
+{% endblock %}
