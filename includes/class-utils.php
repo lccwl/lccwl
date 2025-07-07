@@ -1,6 +1,6 @@
 <?php
 /**
- * Utility functions and helper methods
+ * 工具类 - 提供各种实用功能
  */
 
 if (!defined('ABSPATH')) {
@@ -10,73 +10,11 @@ if (!defined('ABSPATH')) {
 class AI_Optimizer_Utils {
     
     /**
-     * Log messages with different levels
-     */
-    public static function log($message, $level = 'info', $context = array()) {
-        $log_level = AI_Optimizer_Settings::get('log_level', 'info');
-        
-        // Check if we should log this level
-        if (!self::should_log($level, $log_level)) {
-            return;
-        }
-        
-        global $wpdb;
-        
-        $table_name = $wpdb->prefix . 'ai_optimizer_logs';
-        
-        $context_json = !empty($context) ? json_encode($context) : null;
-        
-        $wpdb->insert(
-            $table_name,
-            array(
-                'level' => $level,
-                'message' => $message,
-                'context' => $context_json,
-                'user_id' => get_current_user_id(),
-                'ip_address' => self::get_client_ip(),
-                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
-                'created_at' => current_time('mysql')
-            ),
-            array('%s', '%s', '%s', '%d', '%s', '%s', '%s')
-        );
-        
-        // Also log to WordPress debug log if enabled
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            $log_entry = sprintf(
-                '[%s] [%s] %s %s',
-                date('Y-m-d H:i:s'),
-                strtoupper($level),
-                $message,
-                !empty($context) ? json_encode($context) : ''
-            );
-            error_log($log_entry);
-        }
-    }
-    
-    /**
-     * Check if we should log this level
-     */
-    private static function should_log($message_level, $configured_level) {
-        $levels = array(
-            'debug' => 0,
-            'info' => 1,
-            'warning' => 2,
-            'error' => 3,
-            'critical' => 4
-        );
-        
-        $message_priority = $levels[$message_level] ?? 1;
-        $configured_priority = $levels[$configured_level] ?? 1;
-        
-        return $message_priority >= $configured_priority;
-    }
-    
-    /**
-     * Get client IP address
+     * 获取客户端IP地址
      */
     public static function get_client_ip() {
         $ip_headers = array(
-            'HTTP_CF_CONNECTING_IP',
+            'HTTP_CF_CONNECTING_IP',     // Cloudflare
             'HTTP_CLIENT_IP',
             'HTTP_X_FORWARDED_FOR',
             'HTTP_X_FORWARDED',
@@ -90,490 +28,528 @@ class AI_Optimizer_Utils {
             if (!empty($_SERVER[$header])) {
                 $ip = $_SERVER[$header];
                 
-                // Handle comma-separated IPs
+                // 处理多个IP的情况（以逗号分隔）
                 if (strpos($ip, ',') !== false) {
                     $ip = trim(explode(',', $ip)[0]);
                 }
                 
-                // Validate IP
+                // 验证IP地址格式
                 if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
                     return $ip;
                 }
             }
         }
         
-        return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        return $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
     }
     
     /**
-     * Sanitize and validate input data
+     * 记录日志
      */
-    public static function sanitize_input($data, $type = 'text') {
-        switch ($type) {
-            case 'email':
-                return sanitize_email($data);
-            case 'url':
-                return esc_url_raw($data);
-            case 'int':
-                return intval($data);
-            case 'float':
-                return floatval($data);
-            case 'textarea':
-                return sanitize_textarea_field($data);
-            case 'html':
-                return wp_kses_post($data);
-            case 'filename':
-                return sanitize_file_name($data);
-            case 'key':
-                return sanitize_key($data);
-            case 'text':
-            default:
-                return sanitize_text_field($data);
-        }
-    }
-    
-    /**
-     * Generate secure random string
-     */
-    public static function generate_random_string($length = 32) {
-        if (function_exists('random_bytes')) {
-            try {
-                return bin2hex(random_bytes($length / 2));
-            } catch (Exception $e) {
-                // Fall back to wp_generate_password
-            }
+    public static function log($message, $level = 'info', $context = array()) {
+        if (!AI_Optimizer_Settings::get('enable_logging', true)) {
+            return;
         }
         
-        return wp_generate_password($length, false);
-    }
-    
-    /**
-     * Format file size
-     */
-    public static function format_file_size($bytes) {
-        $units = array('B', 'KB', 'MB', 'GB', 'TB');
+        global $wpdb;
         
-        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
-            $bytes /= 1024;
-        }
+        $table_name = $wpdb->prefix . 'ai_optimizer_logs';
         
-        return round($bytes, 2) . ' ' . $units[$i];
-    }
-    
-    /**
-     * Format time duration
-     */
-    public static function format_duration($seconds) {
-        if ($seconds < 60) {
-            return round($seconds, 1) . 's';
-        } elseif ($seconds < 3600) {
-            return round($seconds / 60, 1) . 'm';
-        } else {
-            return round($seconds / 3600, 1) . 'h';
-        }
-    }
-    
-    /**
-     * Check if string is JSON
-     */
-    public static function is_json($string) {
-        json_decode($string);
-        return json_last_error() === JSON_ERROR_NONE;
-    }
-    
-    /**
-     * Validate URL
-     */
-    public static function is_valid_url($url) {
-        return filter_var($url, FILTER_VALIDATE_URL) !== false;
-    }
-    
-    /**
-     * Calculate text similarity
-     */
-    public static function calculate_similarity($text1, $text2) {
-        $text1 = strtolower(trim($text1));
-        $text2 = strtolower(trim($text2));
+        // 创建日志表（如果不存在）
+        self::create_logs_table();
         
-        if (empty($text1) || empty($text2)) {
-            return 0;
-        }
-        
-        // Simple Levenshtein distance based similarity
-        $max_length = max(strlen($text1), strlen($text2));
-        
-        if ($max_length === 0) {
-            return 100;
-        }
-        
-        $distance = levenshtein($text1, $text2);
-        $similarity = (1 - ($distance / $max_length)) * 100;
-        
-        return max(0, $similarity);
-    }
-    
-    /**
-     * Extract keywords from text
-     */
-    public static function extract_keywords($text, $limit = 10) {
-        $text = strtolower(strip_tags($text));
-        
-        // Remove common stop words
-        $stop_words = array(
-            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
-            'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does',
-            'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that',
-            'these', 'those', 'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you',
-            'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her',
-            'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves'
+        $log_data = array(
+            'level' => sanitize_text_field($level),
+            'message' => sanitize_text_field($message),
+            'context' => wp_json_encode($context),
+            'user_id' => get_current_user_id(),
+            'ip_address' => self::get_client_ip(),
+            'user_agent' => sanitize_text_field($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            'url' => sanitize_text_field($_SERVER['REQUEST_URI'] ?? ''),
+            'created_at' => current_time('mysql')
         );
         
-        // Extract words
-        $words = str_word_count($text, 1);
+        $wpdb->insert($table_name, $log_data);
         
-        // Filter out stop words and short words
-        $filtered_words = array_filter($words, function($word) use ($stop_words) {
-            return strlen($word) > 3 && !in_array($word, $stop_words);
-        });
-        
-        // Count word frequency
-        $word_count = array_count_values($filtered_words);
-        arsort($word_count);
-        
-        return array_slice(array_keys($word_count), 0, $limit);
+        // 如果启用了调试模式，也写入WordPress日志
+        if (defined('WP_DEBUG') && WP_DEBUG && defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+            error_log(sprintf(
+                '[AI Optimizer] [%s] %s %s',
+                strtoupper($level),
+                $message,
+                !empty($context) ? '- Context: ' . wp_json_encode($context) : ''
+            ));
+        }
     }
     
     /**
-     * Generate SEO-friendly slug
+     * 创建日志表
      */
-    public static function generate_slug($text) {
-        return sanitize_title($text);
+    private static function create_logs_table() {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'ai_optimizer_logs';
+        
+        $charset_collate = $wpdb->get_charset_collate();
+        
+        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            level varchar(20) NOT NULL DEFAULT 'info',
+            message text NOT NULL,
+            context longtext,
+            user_id bigint(20) unsigned DEFAULT NULL,
+            ip_address varchar(45),
+            user_agent text,
+            url text,
+            created_at datetime NOT NULL,
+            PRIMARY KEY (id),
+            KEY level (level),
+            KEY user_id (user_id),
+            KEY created_at (created_at)
+        ) $charset_collate;";
+        
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
     }
     
     /**
-     * Validate API key format
+     * 格式化文件大小
+     */
+    public static function format_bytes($size, $precision = 2) {
+        if ($size == 0) {
+            return '0 B';
+        }
+        
+        $base = log($size, 1024);
+        $suffixes = array('B', 'KB', 'MB', 'GB', 'TB');
+        
+        return round(pow(1024, $base - floor($base)), $precision) . ' ' . $suffixes[floor($base)];
+    }
+    
+    /**
+     * 生成随机字符串
+     */
+    public static function generate_random_string($length = 32, $special_chars = false) {
+        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        
+        if ($special_chars) {
+            $chars .= '!@#$%^&*()_+-=[]{}|;:,.<>?';
+        }
+        
+        $chars_length = strlen($chars);
+        $random_string = '';
+        
+        for ($i = 0; $i < $length; $i++) {
+            $random_string .= $chars[random_int(0, $chars_length - 1)];
+        }
+        
+        return $random_string;
+    }
+    
+    /**
+     * 验证API密钥格式
      */
     public static function validate_api_key($api_key) {
-        // Basic validation for Siliconflow API key format
         if (empty($api_key)) {
             return false;
         }
         
-        // Should be a string of reasonable length
-        if (strlen($api_key) < 20 || strlen($api_key) > 200) {
-            return false;
+        // Siliconflow API密钥格式验证
+        if (strpos($api_key, 'sk-') === 0 && strlen($api_key) >= 32) {
+            return true;
         }
         
-        // Should contain alphanumeric characters and possibly hyphens/underscores
-        if (!preg_match('/^[a-zA-Z0-9_-]+$/', $api_key)) {
-            return false;
-        }
-        
-        return true;
+        return false;
     }
     
     /**
-     * Check if current user can perform action
+     * 格式化时间差
      */
-    public static function current_user_can_optimize() {
-        return current_user_can('manage_options') || current_user_can('edit_posts');
+    public static function time_elapsed($datetime, $full = false) {
+        $now = new DateTime;
+        $ago = new DateTime($datetime);
+        $diff = $now->diff($ago);
+        
+        $diff->w = floor($diff->d / 7);
+        $diff->d -= $diff->w * 7;
+        
+        $string = array(
+            'y' => '年',
+            'm' => '月', 
+            'w' => '周',
+            'd' => '天',
+            'h' => '小时',
+            'i' => '分钟',
+            's' => '秒',
+        );
+        
+        foreach ($string as $k => &$v) {
+            if ($diff->$k) {
+                $v = $diff->$k . $v;
+            } else {
+                unset($string[$k]);
+            }
+        }
+        
+        if (!$full) {
+            $string = array_slice($string, 0, 1);
+        }
+        
+        return $string ? implode(', ', $string) . '前' : '刚才';
     }
     
     /**
-     * Get WordPress memory limit in bytes
+     * 清理HTML标签
      */
-    public static function get_memory_limit() {
-        $memory_limit = ini_get('memory_limit');
+    public static function clean_html($content, $allowed_tags = '') {
+        return wp_strip_all_tags($content, $allowed_tags);
+    }
+    
+    /**
+     * 截取文本
+     */
+    public static function truncate_text($text, $length = 100, $suffix = '...') {
+        if (mb_strlen($text) <= $length) {
+            return $text;
+        }
         
-        if (empty($memory_limit) || $memory_limit == -1) {
+        return mb_substr($text, 0, $length) . $suffix;
+    }
+    
+    /**
+     * 验证URL格式
+     */
+    public static function validate_url($url) {
+        return filter_var($url, FILTER_VALIDATE_URL) !== false;
+    }
+    
+    /**
+     * 获取网页标题
+     */
+    public static function get_page_title($url) {
+        if (!self::validate_url($url)) {
             return false;
         }
         
-        $unit = strtolower(substr($memory_limit, -1));
-        $value = intval($memory_limit);
+        $response = wp_remote_get($url, array(
+            'timeout' => 10,
+            'user-agent' => 'AI-Website-Optimizer/' . AI_OPTIMIZER_VERSION
+        ));
         
-        switch ($unit) {
+        if (is_wp_error($response)) {
+            return false;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        
+        if (preg_match('/<title[^>]*>(.*?)<\/title>/is', $body, $matches)) {
+            return html_entity_decode(trim($matches[1]), ENT_QUOTES, 'UTF-8');
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 压缩JSON数据
+     */
+    public static function compress_json($data) {
+        $json = wp_json_encode($data);
+        
+        if (function_exists('gzencode')) {
+            return base64_encode(gzencode($json));
+        }
+        
+        return base64_encode($json);
+    }
+    
+    /**
+     * 解压JSON数据
+     */
+    public static function decompress_json($compressed_data) {
+        $decoded = base64_decode($compressed_data);
+        
+        if (function_exists('gzdecode')) {
+            $decompressed = gzdecode($decoded);
+            if ($decompressed !== false) {
+                return json_decode($decompressed, true);
+            }
+        }
+        
+        return json_decode($decoded, true);
+    }
+    
+    /**
+     * 获取内存使用情况
+     */
+    public static function get_memory_usage() {
+        return array(
+            'current' => memory_get_usage(true),
+            'peak' => memory_get_peak_usage(true),
+            'limit' => ini_get('memory_limit'),
+            'usage_percentage' => round((memory_get_usage(true) / self::convert_to_bytes(ini_get('memory_limit'))) * 100, 2)
+        );
+    }
+    
+    /**
+     * 转换内存大小为字节
+     */
+    private static function convert_to_bytes($value) {
+        $value = trim($value);
+        $last = strtolower($value[strlen($value) - 1]);
+        $value = (int) $value;
+        
+        switch ($last) {
             case 'g':
-                return $value * 1024 * 1024 * 1024;
+                $value *= 1024;
             case 'm':
-                return $value * 1024 * 1024;
+                $value *= 1024;
             case 'k':
-                return $value * 1024;
-            default:
-                return $value;
-        }
-    }
-    
-    /**
-     * Check if WordPress is in debug mode
-     */
-    public static function is_debug_mode() {
-        return defined('WP_DEBUG') && WP_DEBUG;
-    }
-    
-    /**
-     * Get WordPress timezone
-     */
-    public static function get_timezone() {
-        $timezone_string = get_option('timezone_string');
-        
-        if (!empty($timezone_string)) {
-            return $timezone_string;
+                $value *= 1024;
         }
         
-        $offset = get_option('gmt_offset');
-        $sign = ($offset < 0) ? '-' : '+';
-        $hour = intval(abs($offset));
-        $minute = (abs($offset) - $hour) * 60;
-        
-        return sprintf('%s%02d:%02d', $sign, $hour, $minute);
+        return $value;
     }
     
     /**
-     * Convert timezone
+     * 检查插件依赖
      */
-    public static function convert_timezone($datetime, $from_timezone = 'UTC', $to_timezone = null) {
-        if ($to_timezone === null) {
-            $to_timezone = self::get_timezone();
-        }
-        
-        try {
-            $date = new DateTime($datetime, new DateTimeZone($from_timezone));
-            $date->setTimezone(new DateTimeZone($to_timezone));
-            return $date->format('Y-m-d H:i:s');
-        } catch (Exception $e) {
-            self::log('Timezone conversion error', 'error', array(
-                'datetime' => $datetime,
-                'from' => $from_timezone,
-                'to' => $to_timezone,
-                'error' => $e->getMessage()
-            ));
-            return $datetime;
-        }
-    }
-    
-    /**
-     * Create nonce for AJAX requests
-     */
-    public static function create_ajax_nonce($action = 'ai_optimizer_ajax') {
-        return wp_create_nonce($action);
-    }
-    
-    /**
-     * Verify nonce for AJAX requests
-     */
-    public static function verify_ajax_nonce($nonce, $action = 'ai_optimizer_ajax') {
-        return wp_verify_nonce($nonce, $action);
-    }
-    
-    /**
-     * Get plugin version
-     */
-    public static function get_plugin_version() {
-        return AI_OPTIMIZER_VERSION;
-    }
-    
-    /**
-     * Check if plugin is network activated
-     */
-    public static function is_network_activated() {
-        if (!function_exists('is_plugin_active_for_network')) {
-            require_once(ABSPATH . 'wp-admin/includes/plugin.php');
-        }
-        
-        return is_plugin_active_for_network(AI_OPTIMIZER_PLUGIN_BASENAME);
-    }
-    
-    /**
-     * Get all logs with pagination
-     */
-    public static function get_logs($page = 1, $per_page = 50, $level = null) {
-        global $wpdb;
-        
-        $table_name = $wpdb->prefix . 'ai_optimizer_logs';
-        $offset = ($page - 1) * $per_page;
-        
-        $where_clause = '';
-        $params = array();
-        
-        if ($level && $level !== 'all') {
-            $where_clause = 'WHERE level = %s';
-            $params[] = $level;
-        }
-        
-        $query = "SELECT * FROM {$table_name} {$where_clause} ORDER BY created_at DESC LIMIT %d OFFSET %d";
-        $params[] = $per_page;
-        $params[] = $offset;
-        
-        return $wpdb->get_results($wpdb->prepare($query, ...$params), ARRAY_A);
-    }
-    
-    /**
-     * Clear old logs
-     */
-    public static function clear_old_logs($days = 30) {
-        global $wpdb;
-        
-        $table_name = $wpdb->prefix . 'ai_optimizer_logs';
-        
-        $deleted = $wpdb->query(
-            $wpdb->prepare(
-                "DELETE FROM {$table_name} WHERE created_at < DATE_SUB(NOW(), INTERVAL %d DAY)",
-                $days
-            )
-        );
-        
-        self::log('Old logs cleared', 'info', array('deleted_count' => $deleted, 'days' => $days));
-        
-        return $deleted;
-    }
-    
-    /**
-     * Format log level for display
-     */
-    public static function format_log_level($level) {
-        $levels = array(
-            'debug' => array('color' => '#6c757d', 'icon' => 'fas fa-bug'),
-            'info' => array('color' => '#17a2b8', 'icon' => 'fas fa-info-circle'),
-            'warning' => array('color' => '#ffc107', 'icon' => 'fas fa-exclamation-triangle'),
-            'error' => array('color' => '#dc3545', 'icon' => 'fas fa-times-circle'),
-            'critical' => array('color' => '#721c24', 'icon' => 'fas fa-skull')
-        );
-        
-        return $levels[$level] ?? $levels['info'];
-    }
-    
-    /**
-     * Check system requirements
-     */
-    public static function check_system_requirements() {
-        $requirements = array(
+    public static function check_dependencies() {
+        $dependencies = array(
             'php_version' => array(
                 'required' => '7.4',
                 'current' => PHP_VERSION,
                 'status' => version_compare(PHP_VERSION, '7.4', '>=')
             ),
-            'wp_version' => array(
+            'wordpress_version' => array(
                 'required' => '5.0',
                 'current' => get_bloginfo('version'),
                 'status' => version_compare(get_bloginfo('version'), '5.0', '>=')
             ),
-            'memory_limit' => array(
-                'required' => '128M',
-                'current' => ini_get('memory_limit'),
-                'status' => self::get_memory_limit() >= (128 * 1024 * 1024)
-            ),
-            'curl' => array(
+            'curl_extension' => array(
                 'required' => true,
                 'current' => extension_loaded('curl'),
                 'status' => extension_loaded('curl')
             ),
-            'json' => array(
+            'json_extension' => array(
                 'required' => true,
                 'current' => extension_loaded('json'),
                 'status' => extension_loaded('json')
             ),
-            'openssl' => array(
+            'openssl_extension' => array(
                 'required' => true,
                 'current' => extension_loaded('openssl'),
                 'status' => extension_loaded('openssl')
+            ),
+            'gd_extension' => array(
+                'required' => false,
+                'current' => extension_loaded('gd'),
+                'status' => extension_loaded('gd')
             )
         );
         
-        return $requirements;
+        return $dependencies;
     }
     
     /**
-     * Create backup before critical operations
+     * 获取系统信息
      */
-    public static function create_backup($type, $data) {
-        $backup_dir = wp_upload_dir()['basedir'] . '/ai-optimizer-backups';
+    public static function get_system_info() {
+        global $wpdb;
         
-        if (!wp_mkdir_p($backup_dir)) {
-            self::log('Failed to create backup directory', 'error');
-            return false;
-        }
-        
-        $filename = sprintf(
-            '%s_%s_%s.json',
-            $type,
-            date('Y-m-d_H-i-s'),
-            wp_generate_password(8, false)
+        return array(
+            'plugin_version' => AI_OPTIMIZER_VERSION,
+            'wordpress_version' => get_bloginfo('version'),
+            'php_version' => PHP_VERSION,
+            'mysql_version' => $wpdb->db_version(),
+            'server_software' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+            'max_execution_time' => ini_get('max_execution_time'),
+            'memory_limit' => ini_get('memory_limit'),
+            'upload_max_filesize' => ini_get('upload_max_filesize'),
+            'post_max_size' => ini_get('post_max_size'),
+            'timezone' => wp_timezone_string(),
+            'site_url' => get_site_url(),
+            'admin_email' => get_option('admin_email'),
+            'debug_mode' => defined('WP_DEBUG') && WP_DEBUG,
+            'multisite' => is_multisite(),
+            'ssl_enabled' => is_ssl()
         );
-        
-        $backup_file = $backup_dir . '/' . $filename;
-        
-        $backup_data = array(
-            'timestamp' => current_time('mysql'),
-            'type' => $type,
-            'version' => AI_OPTIMIZER_VERSION,
-            'data' => $data
-        );
-        
-        $result = file_put_contents($backup_file, json_encode($backup_data, JSON_PRETTY_PRINT));
-        
-        if ($result === false) {
-            self::log('Failed to create backup file', 'error', array('file' => $backup_file));
-            return false;
-        }
-        
-        self::log('Backup created', 'info', array('file' => $filename, 'type' => $type));
-        
-        return $filename;
     }
     
     /**
-     * Send notification email
+     * 清理过期数据
      */
-    public static function send_notification($to, $subject, $message, $type = 'info') {
-        $admin_email = get_option('admin_email');
+    public static function cleanup_expired_data() {
+        global $wpdb;
         
-        if (empty($to)) {
-            $to = $admin_email;
-        }
+        $retention_days = AI_Optimizer_Settings::get('data_retention_days', 30);
+        $cutoff_date = date('Y-m-d H:i:s', strtotime("-$retention_days days"));
         
-        $headers = array(
-            'Content-Type: text/html; charset=UTF-8',
-            'From: AI Website Optimizer <' . $admin_email . '>'
+        // 清理监控数据
+        $tables = array(
+            $wpdb->prefix . 'ai_optimizer_monitoring',
+            $wpdb->prefix . 'ai_optimizer_frontend_performance',
+            $wpdb->prefix . 'ai_optimizer_frontend_errors',
+            $wpdb->prefix . 'ai_optimizer_logs'
         );
         
-        $template = self::get_email_template($type);
-        $formatted_message = sprintf($template, $subject, $message);
+        $cleaned_records = 0;
         
-        $result = wp_mail($to, $subject, $formatted_message, $headers);
+        foreach ($tables as $table) {
+            if ($wpdb->get_var("SHOW TABLES LIKE '$table'")) {
+                $result = $wpdb->query($wpdb->prepare(
+                    "DELETE FROM $table WHERE created_at < %s",
+                    $cutoff_date
+                ));
+                
+                if ($result !== false) {
+                    $cleaned_records += $result;
+                }
+            }
+        }
         
-        if (!$result) {
-            self::log('Failed to send notification email', 'warning', array(
-                'to' => $to,
-                'subject' => $subject
+        self::log("清理了 $cleaned_records 条过期数据记录", 'info', array(
+            'retention_days' => $retention_days,
+            'cutoff_date' => $cutoff_date
+        ));
+        
+        return $cleaned_records;
+    }
+    
+    /**
+     * 优化数据库表
+     */
+    public static function optimize_database_tables() {
+        global $wpdb;
+        
+        $tables = array(
+            $wpdb->prefix . 'ai_optimizer_monitoring',
+            $wpdb->prefix . 'ai_optimizer_analysis',
+            $wpdb->prefix . 'ai_optimizer_seo_analysis',
+            $wpdb->prefix . 'ai_optimizer_seo_suggestions',
+            $wpdb->prefix . 'ai_optimizer_code_issues',
+            $wpdb->prefix . 'ai_optimizer_generations',
+            $wpdb->prefix . 'ai_optimizer_video_requests',
+            $wpdb->prefix . 'ai_optimizer_api_usage',
+            $wpdb->prefix . 'ai_optimizer_logs',
+            $wpdb->prefix . 'ai_optimizer_collected_content',
+            $wpdb->prefix . 'ai_optimizer_frontend_performance',
+            $wpdb->prefix . 'ai_optimizer_frontend_errors'
+        );
+        
+        $optimized_tables = 0;
+        
+        foreach ($tables as $table) {
+            if ($wpdb->get_var("SHOW TABLES LIKE '$table'")) {
+                $result = $wpdb->query("OPTIMIZE TABLE $table");
+                if ($result !== false) {
+                    $optimized_tables++;
+                }
+            }
+        }
+        
+        self::log("优化了 $optimized_tables 个数据库表", 'info');
+        
+        return $optimized_tables;
+    }
+    
+    /**
+     * 生成唯一ID
+     */
+    public static function generate_unique_id($prefix = '') {
+        return $prefix . uniqid() . '_' . random_int(1000, 9999);
+    }
+    
+    /**
+     * 验证nonce安全
+     */
+    public static function verify_nonce($nonce, $action = 'ai_optimizer_nonce') {
+        return wp_verify_nonce($nonce, $action);
+    }
+    
+    /**
+     * 检查用户权限
+     */
+    public static function check_user_capability($capability = 'manage_options') {
+        return current_user_can($capability);
+    }
+    
+    /**
+     * 安全重定向
+     */
+    public static function safe_redirect($location, $status = 302) {
+        wp_safe_redirect($location, $status);
+        exit;
+    }
+    
+    /**
+     * 获取插件数据目录
+     */
+    public static function get_data_directory() {
+        $upload_dir = wp_upload_dir();
+        $data_dir = $upload_dir['basedir'] . '/ai-optimizer-data/';
+        
+        if (!file_exists($data_dir)) {
+            wp_mkdir_p($data_dir);
+            
+            // 创建.htaccess文件保护目录
+            $htaccess_content = "Order deny,allow\nDeny from all\n";
+            file_put_contents($data_dir . '.htaccess', $htaccess_content);
+            
+            // 创建index.php文件
+            file_put_contents($data_dir . 'index.php', '<?php // Silence is golden.');
+        }
+        
+        return $data_dir;
+    }
+    
+    /**
+     * 保存文件到数据目录
+     */
+    public static function save_file_to_data_dir($filename, $content) {
+        $data_dir = self::get_data_directory();
+        $file_path = $data_dir . sanitize_file_name($filename);
+        
+        $result = file_put_contents($file_path, $content);
+        
+        if ($result !== false) {
+            self::log("文件保存成功", 'info', array(
+                'filename' => $filename,
+                'size' => $result
+            ));
+        } else {
+            self::log("文件保存失败", 'error', array(
+                'filename' => $filename
             ));
         }
         
-        return $result;
+        return $result !== false ? $file_path : false;
     }
     
     /**
-     * Get email template
+     * 从数据目录读取文件
      */
-    private static function get_email_template($type) {
-        $color = array(
-            'info' => '#17a2b8',
-            'success' => '#28a745',
-            'warning' => '#ffc107',
-            'error' => '#dc3545'
-        )[$type] ?? '#17a2b8';
+    public static function read_file_from_data_dir($filename) {
+        $data_dir = self::get_data_directory();
+        $file_path = $data_dir . sanitize_file_name($filename);
         
-        return '
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background-color: ' . $color . '; color: white; padding: 20px; text-align: center;">
-                <h1 style="margin: 0;">%s</h1>
-            </div>
-            <div style="padding: 20px; background-color: #f8f9fa;">
-                %s
-            </div>
-            <div style="padding: 10px; text-align: center; font-size: 12px; color: #6c757d;">
-                AI Website Optimizer Plugin - ' . site_url() . '
-            </div>
-        </div>';
+        if (file_exists($file_path)) {
+            return file_get_contents($file_path);
+        }
+        
+        return false;
+    }
+    
+    /**
+     * 删除数据目录中的文件
+     */
+    public static function delete_file_from_data_dir($filename) {
+        $data_dir = self::get_data_directory();
+        $file_path = $data_dir . sanitize_file_name($filename);
+        
+        if (file_exists($file_path)) {
+            return unlink($file_path);
+        }
+        
+        return false;
     }
 }

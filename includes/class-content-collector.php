@@ -1,6 +1,6 @@
 <?php
 /**
- * Content Collector class for automated content gathering and AI rewriting
+ * 内容收集器 - 从RSS源和网站收集内容并使用AI重写
  */
 
 if (!defined('ABSPATH')) {
@@ -9,107 +9,229 @@ if (!defined('ABSPATH')) {
 
 class AI_Optimizer_Content_Collector {
     
+    private static $instance = null;
     private $api_handler;
-    private $sources;
     
-    public function __construct() {
-        $this->api_handler = new AI_Optimizer_API_Handler();
-        $this->sources = $this->get_content_sources();
+    public static function get_instance() {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+    
+    private function __construct() {
+        $this->api_handler = AI_Optimizer_API_Handler::get_instance();
+        $this->init();
+    }
+    
+    private function init() {
+        // 注册定时任务
+        add_action('wp', array($this, 'setup_cron_jobs'));
+        add_action('ai_optimizer_collect_content', array($this, 'run_content_collection'));
+        
+        // AJAX处理
+        add_action('wp_ajax_ai_optimizer_add_source', array($this, 'handle_add_source'));
+        add_action('wp_ajax_ai_optimizer_remove_source', array($this, 'handle_remove_source'));
+        add_action('wp_ajax_ai_optimizer_test_source', array($this, 'handle_test_source'));
+        add_action('wp_ajax_ai_optimizer_manual_collection', array($this, 'handle_manual_collection'));
+        add_action('wp_ajax_ai_optimizer_publish_content', array($this, 'handle_publish_content'));
+        
+        // 数据库表初始化
+        $this->create_tables();
     }
     
     /**
-     * Collect content from all configured sources
+     * 创建数据库表
      */
-    public function collect_all_content() {
-        AI_Optimizer_Utils::log('Starting content collection from all sources', 'info');
+    private function create_tables() {
+        global $wpdb;
         
-        $collected_items = array();
+        $charset_collate = $wpdb->get_charset_collate();
         
-        foreach ($this->sources as $source) {
-            $items = $this->collect_from_source($source);
-            $collected_items = array_merge($collected_items, $items);
-            
-            // Add delay between sources to be respectful
-            sleep(2);
+        // 内容源表
+        $sources_table = $wpdb->prefix . 'ai_optimizer_content_sources';
+        $sql_sources = "CREATE TABLE IF NOT EXISTS $sources_table (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            name varchar(255) NOT NULL,
+            type enum('rss', 'website', 'api') NOT NULL DEFAULT 'rss',
+            url text NOT NULL,
+            status enum('active', 'inactive', 'error') NOT NULL DEFAULT 'active',
+            settings longtext,
+            last_collected datetime,
+            total_collected int(11) NOT NULL DEFAULT 0,
+            success_rate float NOT NULL DEFAULT 100,
+            created_at datetime NOT NULL,
+            updated_at datetime NOT NULL,
+            PRIMARY KEY (id),
+            KEY type (type),
+            KEY status (status)
+        ) $charset_collate;";
+        
+        // 收集到的内容表
+        $content_table = $wpdb->prefix . 'ai_optimizer_collected_content';
+        $sql_content = "CREATE TABLE IF NOT EXISTS $content_table (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            source_id bigint(20) unsigned NOT NULL,
+            original_title text NOT NULL,
+            original_content longtext NOT NULL,
+            original_url text,
+            rewritten_title text,
+            rewritten_content longtext,
+            rewrite_status enum('pending', 'processing', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+            publish_status enum('draft', 'pending', 'published', 'rejected') NOT NULL DEFAULT 'draft',
+            post_id bigint(20) unsigned,
+            keywords text,
+            category varchar(255),
+            tags text,
+            seo_score int(11),
+            quality_score int(11),
+            language varchar(10) NOT NULL DEFAULT 'zh',
+            collected_at datetime NOT NULL,
+            rewritten_at datetime,
+            published_at datetime,
+            PRIMARY KEY (id),
+            KEY source_id (source_id),
+            KEY rewrite_status (rewrite_status),
+            KEY publish_status (publish_status),
+            KEY collected_at (collected_at),
+            FOREIGN KEY (source_id) REFERENCES {$wpdb->prefix}ai_optimizer_content_sources(id) ON DELETE CASCADE
+        ) $charset_collate;";
+        
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql_sources);
+        dbDelta($sql_content);
+    }
+    
+    /**
+     * 设置定时任务
+     */
+    public function setup_cron_jobs() {
+        if (!wp_next_scheduled('ai_optimizer_collect_content')) {
+            $frequency = AI_Optimizer_Settings::get('content_collection_frequency', 'hourly');
+            wp_schedule_event(time(), $frequency, 'ai_optimizer_collect_content');
+        }
+    }
+    
+    /**
+     * 执行内容收集
+     */
+    public function run_content_collection() {
+        if (!AI_Optimizer_Settings::get('enable_content_collection', false)) {
+            return;
         }
         
-        // Process collected items
-        $processed_items = array();
-        foreach ($collected_items as $item) {
-            $processed = $this->process_content_item($item);
-            if ($processed) {
-                $processed_items[] = $processed;
-            }
-            
-            // Rate limiting
-            sleep(1);
+        $sources = $this->get_active_sources();
+        
+        foreach ($sources as $source) {
+            $this->collect_from_source($source);
         }
         
-        AI_Optimizer_Utils::log('Content collection completed', 'info', array(
-            'sources_checked' => count($this->sources),
-            'items_collected' => count($collected_items),
-            'items_processed' => count($processed_items)
+        // 处理待重写的内容
+        $this->process_pending_rewrites();
+        
+        // 自动发布（如果启用）
+        if (AI_Optimizer_Settings::get('auto_publish_content', false)) {
+            $this->auto_publish_content();
+        }
+    }
+    
+    /**
+     * 获取活跃内容源
+     */
+    private function get_active_sources() {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'ai_optimizer_content_sources';
+        
+        return $wpdb->get_results("
+            SELECT * FROM $table_name 
+            WHERE status = 'active' 
+            ORDER BY last_collected ASC
+        ");
+    }
+    
+    /**
+     * 从指定源收集内容
+     */
+    private function collect_from_source($source) {
+        AI_Optimizer_Utils::log("开始从源收集内容", 'info', array(
+            'source_id' => $source->id,
+            'source_name' => $source->name,
+            'source_type' => $source->type
         ));
         
-        return $processed_items;
-    }
-    
-    /**
-     * Collect content from a specific source
-     */
-    public function collect_from_source($source) {
-        $source_type = $this->detect_source_type($source);
-        
-        switch ($source_type) {
-            case 'rss':
-                return $this->collect_from_rss($source);
-            case 'website':
-                return $this->collect_from_website($source);
-            case 'api':
-                return $this->collect_from_api($source);
-            default:
-                AI_Optimizer_Utils::log('Unknown source type', 'warning', array('source' => $source));
-                return array();
+        try {
+            $collected_items = array();
+            
+            switch ($source->type) {
+                case 'rss':
+                    $collected_items = $this->collect_from_rss($source);
+                    break;
+                case 'website':
+                    $collected_items = $this->collect_from_website($source);
+                    break;
+                case 'api':
+                    $collected_items = $this->collect_from_api($source);
+                    break;
+            }
+            
+            // 保存收集到的内容
+            foreach ($collected_items as $item) {
+                $this->save_collected_content($source->id, $item);
+            }
+            
+            // 更新源状态
+            $this->update_source_status($source->id, 'active', count($collected_items));
+            
+            AI_Optimizer_Utils::log("内容收集完成", 'info', array(
+                'source_id' => $source->id,
+                'items_collected' => count($collected_items)
+            ));
+            
+        } catch (Exception $e) {
+            $this->update_source_status($source->id, 'error');
+            
+            AI_Optimizer_Utils::log("内容收集失败", 'error', array(
+                'source_id' => $source->id,
+                'error' => $e->getMessage()
+            ));
         }
     }
     
     /**
-     * Collect from RSS feed
+     * 从RSS源收集内容
      */
-    private function collect_from_rss($rss_url) {
-        $items = array();
+    private function collect_from_rss($source) {
+        $settings = json_decode($source->settings, true) ?: array();
+        $max_items = $settings['max_items'] ?? 10;
         
-        AI_Optimizer_Utils::log('Collecting from RSS feed', 'info', array('url' => $rss_url));
-        
-        $rss = fetch_feed($rss_url);
+        $rss = fetch_feed($source->url);
         
         if (is_wp_error($rss)) {
-            AI_Optimizer_Utils::log('RSS feed error', 'error', array(
-                'url' => $rss_url,
-                'error' => $rss->get_error_message()
-            ));
-            return array();
+            throw new Exception('无法获取RSS源: ' . $rss->get_error_message());
         }
         
-        $maxitems = $rss->get_item_quantity(20);
-        $rss_items = $rss->get_items(0, $maxitems);
+        $items = array();
+        $rss_items = $rss->get_items(0, $max_items);
         
         foreach ($rss_items as $item) {
-            $collected_item = array(
+            // 检查是否已经收集过这个内容
+            if ($this->is_content_already_collected($item->get_permalink())) {
+                continue;
+            }
+            
+            $content = array(
                 'title' => $item->get_title(),
                 'content' => $item->get_content(),
-                'excerpt' => $item->get_description(),
-                'url' => $item->get_link(),
-                'published' => $item->get_date('Y-m-d H:i:s'),
+                'url' => $item->get_permalink(),
+                'published_date' => $item->get_date('Y-m-d H:i:s'),
                 'author' => $item->get_author() ? $item->get_author()->get_name() : '',
-                'source_url' => $rss_url,
-                'source_type' => 'rss',
                 'categories' => $this->extract_categories($item)
             );
             
-            // Check if content is new
-            if (!$this->content_exists($collected_item)) {
-                $items[] = $collected_item;
+            // 内容质量检查
+            if ($this->check_content_quality($content)) {
+                $items[] = $content;
             }
         }
         
@@ -117,76 +239,113 @@ class AI_Optimizer_Content_Collector {
     }
     
     /**
-     * Collect from website by scraping
+     * 从网站收集内容
      */
-    private function collect_from_website($website_url) {
-        $items = array();
+    private function collect_from_website($source) {
+        $settings = json_decode($source->settings, true) ?: array();
+        $selectors = $settings['selectors'] ?? array();
         
-        AI_Optimizer_Utils::log('Collecting from website', 'info', array('url' => $website_url));
-        
-        $response = wp_remote_get($website_url, array('timeout' => 30));
-        
-        if (is_wp_error($response)) {
-            AI_Optimizer_Utils::log('Website scraping error', 'error', array(
-                'url' => $website_url,
-                'error' => $response->get_error_message()
-            ));
-            return array();
-        }
-        
-        $html = wp_remote_retrieve_body($response);
-        $dom = new DOMDocument();
-        @$dom->loadHTML($html);
-        
-        // Extract articles using common patterns
-        $articles = $this->extract_articles_from_dom($dom, $website_url);
-        
-        foreach ($articles as $article) {
-            if (!$this->content_exists($article)) {
-                $items[] = $article;
-            }
-        }
-        
-        return $items;
-    }
-    
-    /**
-     * Collect from API endpoints
-     */
-    private function collect_from_api($api_config) {
-        $items = array();
-        
-        // Parse API configuration
-        $config = json_decode($api_config, true);
-        if (!$config) {
-            return array();
-        }
-        
-        AI_Optimizer_Utils::log('Collecting from API', 'info', array('endpoint' => $config['endpoint']));
-        
-        $response = wp_remote_get($config['endpoint'], array(
-            'headers' => $config['headers'] ?? array(),
-            'timeout' => 30
+        $response = wp_remote_get($source->url, array(
+            'timeout' => 30,
+            'user-agent' => 'AI-Website-Optimizer/' . AI_OPTIMIZER_VERSION
         ));
         
         if (is_wp_error($response)) {
-            AI_Optimizer_Utils::log('API collection error', 'error', array(
-                'endpoint' => $config['endpoint'],
-                'error' => $response->get_error_message()
-            ));
-            return array();
+            throw new Exception('无法访问网站: ' . $response->get_error_message());
+        }
+        
+        $html = wp_remote_retrieve_body($response);
+        
+        // 使用DOMDocument解析HTML
+        libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        $dom->loadHTML($html);
+        libxml_clear_errors();
+        
+        $xpath = new DOMXPath($dom);
+        $items = array();
+        
+        // 根据配置的选择器提取内容
+        $title_selector = $selectors['title'] ?? 'h1, h2, .title';
+        $content_selector = $selectors['content'] ?? '.content, .post-content, article';
+        $link_selector = $selectors['link'] ?? 'a';
+        
+        $title_nodes = $xpath->query($this->css_to_xpath($title_selector));
+        $content_nodes = $xpath->query($this->css_to_xpath($content_selector));
+        
+        $count = min($title_nodes->length, $content_nodes->length);
+        
+        for ($i = 0; $i < $count; $i++) {
+            $title = trim($title_nodes->item($i)->textContent);
+            $content = trim($content_nodes->item($i)->textContent);
+            
+            if (!empty($title) && !empty($content) && strlen($content) > 100) {
+                $items[] = array(
+                    'title' => $title,
+                    'content' => $content,
+                    'url' => $source->url,
+                    'published_date' => current_time('mysql'),
+                    'author' => '',
+                    'categories' => array()
+                );
+            }
+        }
+        
+        return $items;
+    }
+    
+    /**
+     * 从API收集内容
+     */
+    private function collect_from_api($source) {
+        $settings = json_decode($source->settings, true) ?: array();
+        $headers = $settings['headers'] ?? array();
+        $auth = $settings['auth'] ?? array();
+        
+        $args = array(
+            'timeout' => 30,
+            'headers' => $headers
+        );
+        
+        // 添加认证信息
+        if (!empty($auth['type'])) {
+            switch ($auth['type']) {
+                case 'bearer':
+                    $args['headers']['Authorization'] = 'Bearer ' . $auth['token'];
+                    break;
+                case 'api_key':
+                    $args['headers'][$auth['header']] = $auth['key'];
+                    break;
+            }
+        }
+        
+        $response = wp_remote_get($source->url, $args);
+        
+        if (is_wp_error($response)) {
+            throw new Exception('API请求失败: ' . $response->get_error_message());
         }
         
         $data = json_decode(wp_remote_retrieve_body($response), true);
         
-        if ($data && isset($config['data_path'])) {
-            $items_data = $this->extract_data_by_path($data, $config['data_path']);
-            
-            foreach ($items_data as $item_data) {
-                $mapped_item = $this->map_api_data($item_data, $config['mapping'] ?? array());
-                if ($mapped_item && !$this->content_exists($mapped_item)) {
-                    $items[] = $mapped_item;
-                }
+        if (!$data) {
+            throw new Exception('无效的API响应');
+        }
+        
+        // 根据API响应格式解析数据
+        $items = array();
+        $data_path = $settings['data_path'] ?? 'data';
+        $content_data = $this->get_nested_value($data, $data_path);
+        
+        if (is_array($content_data)) {
+            foreach ($content_data as $item) {
+                $items[] = array(
+                    'title' => $this->get_nested_value($item, $settings['title_field'] ?? 'title'),
+                    'content' => $this->get_nested_value($item, $settings['content_field'] ?? 'content'),
+                    'url' => $this->get_nested_value($item, $settings['url_field'] ?? 'url'),
+                    'published_date' => $this->get_nested_value($item, $settings['date_field'] ?? 'date'),
+                    'author' => $this->get_nested_value($item, $settings['author_field'] ?? 'author'),
+                    'categories' => $this->get_nested_value($item, $settings['category_field'] ?? 'categories')
+                );
             }
         }
         
@@ -194,542 +353,649 @@ class AI_Optimizer_Content_Collector {
     }
     
     /**
-     * Process content item with AI
+     * 检查内容是否已经收集过
      */
-    private function process_content_item($item) {
-        // Check content quality
-        if (!$this->is_content_quality_acceptable($item)) {
-            return false;
-        }
-        
-        // Rewrite content to avoid copyright issues
-        $rewritten_content = $this->rewrite_content_with_ai($item);
-        
-        if (!$rewritten_content) {
-            AI_Optimizer_Utils::log('Failed to rewrite content', 'warning', array(
-                'title' => $item['title']
-            ));
-            return false;
-        }
-        
-        // Enhance with SEO optimization
-        $seo_optimized = $this->optimize_content_for_seo($rewritten_content);
-        
-        // Generate categories and tags
-        $categories_tags = $this->generate_categories_and_tags($seo_optimized);
-        
-        return array_merge($seo_optimized, $categories_tags, array(
-            'original_source' => $item['source_url'],
-            'collection_date' => current_time('mysql'),
-            'processing_status' => 'ready_to_publish'
-        ));
-    }
-    
-    /**
-     * Rewrite content using AI
-     */
-    private function rewrite_content_with_ai($item) {
-        $original_content = $item['content'];
-        $title = $item['title'];
-        
-        $rewrite_prompt = "Rewrite this article to be original and engaging while preserving the key information:\n\n";
-        $rewrite_prompt .= "Original Title: {$title}\n";
-        $rewrite_prompt .= "Original Content: " . wp_trim_words($original_content, 300) . "\n\n";
-        $rewrite_prompt .= "Requirements:\n";
-        $rewrite_prompt .= "- Create completely original content\n";
-        $rewrite_prompt .= "- Maintain factual accuracy\n";
-        $rewrite_prompt .= "- Improve readability and engagement\n";
-        $rewrite_prompt .= "- Optimize for SEO\n";
-        $rewrite_prompt .= "- Keep the same general topic and intent\n\n";
-        $rewrite_prompt .= "Provide: New Title, New Content (minimum 300 words), Meta Description";
-        
-        $rewritten = $this->api_handler->chat_completion(
-            $rewrite_prompt,
-            'Qwen/QwQ-32B',
-            'You are a professional content writer specializing in creating original, SEO-optimized articles.'
-        );
-        
-        if (!$rewritten) {
-            return false;
-        }
-        
-        // Parse the AI response
-        $parsed = $this->parse_rewritten_content($rewritten, $item);
-        
-        return $parsed;
-    }
-    
-    /**
-     * Optimize content for SEO
-     */
-    private function optimize_content_for_seo($content) {
-        $target_keywords = AI_Optimizer_Settings::get('seo_target_keywords', '');
-        $keywords_array = array_filter(array_map('trim', explode("\n", $target_keywords)));
-        
-        if (empty($keywords_array)) {
-            return $content;
-        }
-        
-        $optimization_prompt = "Optimize this content for SEO using these target keywords: " . implode(', ', $keywords_array) . "\n\n";
-        $optimization_prompt .= "Content: {$content['content']}\n\n";
-        $optimization_prompt .= "Requirements:\n";
-        $optimization_prompt .= "- Naturally integrate target keywords\n";
-        $optimization_prompt .= "- Maintain keyword density between 1-3%\n";
-        $optimization_prompt .= "- Improve content structure with headings\n";
-        $optimization_prompt .= "- Add internal linking suggestions\n";
-        $optimization_prompt .= "- Ensure readability remains high\n\n";
-        $optimization_prompt .= "Return the optimized content with suggested improvements.";
-        
-        $optimized = $this->api_handler->chat_completion(
-            $optimization_prompt,
-            'Qwen/QwQ-32B',
-            'You are an SEO expert specializing in content optimization.'
-        );
-        
-        if ($optimized) {
-            $content['content'] = $optimized;
-            $content['seo_optimized'] = true;
-        }
-        
-        return $content;
-    }
-    
-    /**
-     * Generate categories and tags using AI
-     */
-    private function generate_categories_and_tags($content) {
-        $categorization_prompt = "Analyze this content and suggest appropriate WordPress categories and tags:\n\n";
-        $categorization_prompt .= "Title: {$content['title']}\n";
-        $categorization_prompt .= "Content: " . wp_trim_words($content['content'], 200) . "\n\n";
-        $categorization_prompt .= "Provide:\n";
-        $categorization_prompt .= "1. Primary Category (1-2 categories)\n";
-        $categorization_prompt .= "2. Tags (5-10 relevant tags)\n";
-        $categorization_prompt .= "3. Content type classification\n\n";
-        $categorization_prompt .= "Format as JSON: {\"categories\": [\"cat1\", \"cat2\"], \"tags\": [\"tag1\", \"tag2\"], \"content_type\": \"type\"}";
-        
-        $categorization = $this->api_handler->chat_completion(
-            $categorization_prompt,
-            'Qwen/QwQ-32B',
-            'You are a content categorization specialist.'
-        );
-        
-        $parsed_categorization = json_decode($categorization, true);
-        
-        if ($parsed_categorization) {
-            return array(
-                'suggested_categories' => $parsed_categorization['categories'] ?? array(),
-                'suggested_tags' => $parsed_categorization['tags'] ?? array(),
-                'content_type' => $parsed_categorization['content_type'] ?? 'article'
-            );
-        }
-        
-        return array(
-            'suggested_categories' => array(),
-            'suggested_tags' => array(),
-            'content_type' => 'article'
-        );
-    }
-    
-    /**
-     * Auto-publish processed content
-     */
-    public function auto_publish_content($content_items) {
-        if (!AI_Optimizer_Settings::get('content_auto_publish', false)) {
-            return false;
-        }
-        
-        $published_count = 0;
-        
-        foreach ($content_items as $item) {
-            $post_id = $this->create_wordpress_post($item);
-            
-            if ($post_id) {
-                $published_count++;
-                
-                // Store collection metadata
-                $this->store_collection_metadata($post_id, $item);
-                
-                AI_Optimizer_Utils::log('Auto-published content', 'info', array(
-                    'post_id' => $post_id,
-                    'title' => $item['title'],
-                    'source' => $item['original_source']
-                ));
-                
-                // Rate limiting between posts
-                sleep(5);
-            }
-        }
-        
-        return $published_count;
-    }
-    
-    /**
-     * Create WordPress post from content item
-     */
-    private function create_wordpress_post($item) {
-        $default_categories = AI_Optimizer_Settings::get('content_categories', array());
-        
-        $post_data = array(
-            'post_title' => $item['title'],
-            'post_content' => $item['content'],
-            'post_excerpt' => $item['meta_description'] ?? '',
-            'post_status' => 'draft', // Start as draft for review
-            'post_type' => 'post',
-            'post_category' => $default_categories,
-            'meta_input' => array(
-                'ai_optimizer_source_url' => $item['original_source'],
-                'ai_optimizer_collection_date' => $item['collection_date'],
-                'ai_optimizer_processed_by_ai' => true
-            )
-        );
-        
-        $post_id = wp_insert_post($post_data);
-        
-        if ($post_id && !is_wp_error($post_id)) {
-            // Add suggested tags
-            if (!empty($item['suggested_tags'])) {
-                wp_set_post_tags($post_id, $item['suggested_tags']);
-            }
-            
-            // Add suggested categories
-            if (!empty($item['suggested_categories'])) {
-                $category_ids = array();
-                foreach ($item['suggested_categories'] as $cat_name) {
-                    $cat = get_category_by_slug(sanitize_title($cat_name));
-                    if (!$cat) {
-                        $cat_id = wp_create_category($cat_name);
-                        if ($cat_id) {
-                            $category_ids[] = $cat_id;
-                        }
-                    } else {
-                        $category_ids[] = $cat->term_id;
-                    }
-                }
-                
-                if (!empty($category_ids)) {
-                    wp_set_post_categories($post_id, $category_ids, true);
-                }
-            }
-            
-            return $post_id;
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Check if content already exists
-     */
-    private function content_exists($item) {
+    private function is_content_already_collected($url) {
         global $wpdb;
         
-        // Check by title similarity
-        $existing_post = $wpdb->get_row(
-            $wpdb->prepare(
-                "SELECT ID FROM {$wpdb->posts} 
-                WHERE post_title = %s 
-                AND post_status IN ('publish', 'draft', 'pending') 
-                LIMIT 1",
-                $item['title']
-            )
-        );
+        $table_name = $wpdb->prefix . 'ai_optimizer_collected_content';
         
-        if ($existing_post) {
-            return true;
-        }
+        $count = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_name WHERE original_url = %s",
+            $url
+        ));
         
-        // Check by URL if available
-        if (isset($item['url'])) {
-            $existing_meta = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT post_id FROM {$wpdb->postmeta} 
-                    WHERE meta_key = 'ai_optimizer_source_url' 
-                    AND meta_value = %s 
-                    LIMIT 1",
-                    $item['url']
-                )
-            );
-            
-            if ($existing_meta) {
-                return true;
-            }
-        }
-        
-        return false;
+        return $count > 0;
     }
     
     /**
-     * Helper methods
+     * 检查内容质量
      */
-    private function get_content_sources() {
-        $sources_text = AI_Optimizer_Settings::get('content_sources', '');
-        $sources = array_filter(array_map('trim', explode("\n", $sources_text)));
+    private function check_content_quality($content) {
+        $min_length = AI_Optimizer_Settings::get('min_content_length', 200);
+        $blacklist_words = AI_Optimizer_Settings::get('content_blacklist', array());
         
-        return $sources;
-    }
-    
-    private function detect_source_type($source) {
-        if (strpos($source, '.xml') !== false || strpos($source, 'rss') !== false || strpos($source, 'feed') !== false) {
-            return 'rss';
-        }
-        
-        if (strpos($source, '{') === 0) {
-            return 'api';
-        }
-        
-        return 'website';
-    }
-    
-    private function extract_categories($rss_item) {
-        $categories = array();
-        $item_categories = $rss_item->get_categories();
-        
-        if ($item_categories) {
-            foreach ($item_categories as $category) {
-                $categories[] = $category->get_label();
-            }
-        }
-        
-        return $categories;
-    }
-    
-    private function extract_articles_from_dom($dom, $base_url) {
-        $articles = array();
-        $xpath = new DOMXPath($dom);
-        
-        // Common article selectors
-        $article_selectors = array(
-            '//article',
-            '//*[contains(@class, "post")]',
-            '//*[contains(@class, "article")]',
-            '//*[contains(@class, "entry")]'
-        );
-        
-        foreach ($article_selectors as $selector) {
-            $nodes = $xpath->query($selector);
-            
-            foreach ($nodes as $node) {
-                $article = $this->extract_article_from_node($node, $base_url);
-                if ($article && !empty($article['title']) && !empty($article['content'])) {
-                    $articles[] = $article;
-                }
-            }
-            
-            if (!empty($articles)) {
-                break; // Found articles with first selector
-            }
-        }
-        
-        return array_slice($articles, 0, 10); // Limit to 10 articles per page
-    }
-    
-    private function extract_article_from_node($node, $base_url) {
-        $xpath = new DOMXPath($node->ownerDocument);
-        
-        // Extract title
-        $title_nodes = $xpath->query('.//h1 | .//h2 | .//h3 | .//*[contains(@class, "title")]', $node);
-        $title = $title_nodes->length > 0 ? trim($title_nodes->item(0)->textContent) : '';
-        
-        // Extract content
-        $content_nodes = $xpath->query('.//*[contains(@class, "content") or contains(@class, "body") or contains(@class, "text")]', $node);
-        $content = '';
-        
-        if ($content_nodes->length > 0) {
-            $content = trim($content_nodes->item(0)->textContent);
-        } else {
-            // Fallback to all text content
-            $content = trim($node->textContent);
-        }
-        
-        // Extract link
-        $link_nodes = $xpath->query('.//a[@href]', $node);
-        $link = '';
-        
-        if ($link_nodes->length > 0) {
-            $href = $link_nodes->item(0)->getAttribute('href');
-            $link = $this->resolve_url($href, $base_url);
-        }
-        
-        return array(
-            'title' => $title,
-            'content' => $content,
-            'excerpt' => wp_trim_words($content, 50),
-            'url' => $link,
-            'published' => current_time('mysql'),
-            'author' => '',
-            'source_url' => $base_url,
-            'source_type' => 'website'
-        );
-    }
-    
-    private function resolve_url($href, $base_url) {
-        if (strpos($href, 'http') === 0) {
-            return $href;
-        }
-        
-        $parsed_base = parse_url($base_url);
-        $base_scheme_host = $parsed_base['scheme'] . '://' . $parsed_base['host'];
-        
-        if (strpos($href, '/') === 0) {
-            return $base_scheme_host . $href;
-        }
-        
-        return $base_scheme_host . '/' . ltrim($href, '/');
-    }
-    
-    private function extract_data_by_path($data, $path) {
-        $keys = explode('.', $path);
-        $current = $data;
-        
-        foreach ($keys as $key) {
-            if (is_array($current) && isset($current[$key])) {
-                $current = $current[$key];
-            } else {
-                return array();
-            }
-        }
-        
-        return is_array($current) ? $current : array($current);
-    }
-    
-    private function map_api_data($item_data, $mapping) {
-        $mapped = array();
-        
-        foreach ($mapping as $field => $path) {
-            $value = $this->get_nested_value($item_data, $path);
-            $mapped[$field] = $value;
-        }
-        
-        return $mapped;
-    }
-    
-    private function get_nested_value($data, $path) {
-        $keys = explode('.', $path);
-        $current = $data;
-        
-        foreach ($keys as $key) {
-            if (is_array($current) && isset($current[$key])) {
-                $current = $current[$key];
-            } else {
-                return '';
-            }
-        }
-        
-        return $current;
-    }
-    
-    private function is_content_quality_acceptable($item) {
-        // Basic quality checks
-        $title_length = strlen($item['title']);
-        $content_length = strlen($item['content']);
-        
-        if ($title_length < 10 || $title_length > 200) {
+        // 长度检查
+        if (strlen(strip_tags($content['content'])) < $min_length) {
             return false;
         }
         
-        if ($content_length < 100) {
-            return false;
-        }
-        
-        // Check for spam patterns
-        $spam_patterns = array(
-            '/\b(?:buy now|click here|free money|guaranteed)\b/i',
-            '/\b(?:viagra|casino|poker|loan)\b/i'
-        );
-        
-        $full_text = $item['title'] . ' ' . $item['content'];
-        
-        foreach ($spam_patterns as $pattern) {
-            if (preg_match($pattern, $full_text)) {
+        // 黑名单词汇检查
+        foreach ($blacklist_words as $word) {
+            if (stripos($content['title'] . ' ' . $content['content'], $word) !== false) {
                 return false;
             }
+        }
+        
+        // 重复内容检查
+        if ($this->check_duplicate_content($content['content'])) {
+            return false;
         }
         
         return true;
     }
     
-    private function parse_rewritten_content($rewritten_text, $original_item) {
-        // Try to extract structured content from AI response
-        $lines = explode("\n", $rewritten_text);
+    /**
+     * 检查重复内容
+     */
+    private function check_duplicate_content($content) {
+        global $wpdb;
         
-        $new_title = '';
-        $new_content = '';
-        $meta_description = '';
+        $content_hash = md5(strip_tags($content));
         
-        $current_section = '';
+        // 检查已发布的文章
+        $existing_post = $wpdb->get_var($wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE MD5(post_content) = %s AND post_status = 'publish'",
+            $content_hash
+        ));
         
-        foreach ($lines as $line) {
-            $line = trim($line);
-            
-            if (stripos($line, 'title:') === 0) {
-                $new_title = trim(substr($line, 6));
-                $current_section = 'title';
-            } elseif (stripos($line, 'content:') === 0) {
-                $new_content = trim(substr($line, 8));
-                $current_section = 'content';
-            } elseif (stripos($line, 'meta description:') === 0) {
-                $meta_description = trim(substr($line, 17));
-                $current_section = 'meta';
-            } elseif (!empty($line) && $current_section) {
-                if ($current_section === 'content') {
-                    $new_content .= "\n" . $line;
-                } elseif ($current_section === 'meta') {
-                    $meta_description .= " " . $line;
-                }
-            }
+        if ($existing_post) {
+            return true;
         }
         
-        // Fallback if structured parsing fails
-        if (empty($new_title)) {
-            $new_title = $original_item['title'];
-        }
+        // 检查已收集的内容
+        $table_name = $wpdb->prefix . 'ai_optimizer_collected_content';
+        $existing_content = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM $table_name WHERE MD5(original_content) = %s",
+            $content_hash
+        ));
         
-        if (empty($new_content)) {
-            $new_content = $rewritten_text;
-        }
-        
-        return array(
-            'title' => $new_title,
-            'content' => $new_content,
-            'meta_description' => $meta_description,
-            'excerpt' => wp_trim_words($new_content, 50)
-        );
+        return $existing_content !== null;
     }
     
-    private function store_collection_metadata($post_id, $item) {
-        update_post_meta($post_id, 'ai_optimizer_original_source', $item['original_source']);
-        update_post_meta($post_id, 'ai_optimizer_collection_method', $item['source_type']);
-        update_post_meta($post_id, 'ai_optimizer_processed_date', $item['collection_date']);
-        update_post_meta($post_id, 'ai_optimizer_ai_rewritten', true);
+    /**
+     * 保存收集到的内容
+     */
+    private function save_collected_content($source_id, $content) {
+        global $wpdb;
         
-        if (isset($item['seo_optimized'])) {
-            update_post_meta($post_id, 'ai_optimizer_seo_optimized', $item['seo_optimized']);
+        $table_name = $wpdb->prefix . 'ai_optimizer_collected_content';
+        
+        $data = array(
+            'source_id' => $source_id,
+            'original_title' => sanitize_text_field($content['title']),
+            'original_content' => wp_kses_post($content['content']),
+            'original_url' => esc_url_raw($content['url']),
+            'category' => sanitize_text_field($content['categories'][0] ?? ''),
+            'language' => $this->detect_language($content['content']),
+            'collected_at' => current_time('mysql')
+        );
+        
+        $result = $wpdb->insert($table_name, $data);
+        
+        if ($result !== false) {
+            AI_Optimizer_Utils::log("内容已保存", 'info', array(
+                'content_id' => $wpdb->insert_id,
+                'title' => $content['title']
+            ));
         }
     }
     
     /**
-     * Get collection statistics
+     * 处理待重写的内容
      */
-    public function get_collection_stats() {
+    private function process_pending_rewrites() {
         global $wpdb;
         
-        $stats = $wpdb->get_row(
-            "SELECT 
-                COUNT(*) as total_collected,
-                COUNT(CASE WHEN post_status = 'publish' THEN 1 END) as published,
-                COUNT(CASE WHEN post_status = 'draft' THEN 1 END) as drafts
-            FROM {$wpdb->posts} p
-            INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
-            WHERE pm.meta_key = 'ai_optimizer_processed_by_ai'
-            AND pm.meta_value = '1'
-            AND p.post_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)",
-            ARRAY_A
+        $table_name = $wpdb->prefix . 'ai_optimizer_collected_content';
+        $batch_size = AI_Optimizer_Settings::get('rewrite_batch_size', 5);
+        
+        $pending_content = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table_name 
+             WHERE rewrite_status = 'pending' 
+             ORDER BY collected_at ASC 
+             LIMIT %d",
+            $batch_size
+        ));
+        
+        foreach ($pending_content as $content) {
+            $this->rewrite_content($content);
+        }
+    }
+    
+    /**
+     * 重写内容
+     */
+    private function rewrite_content($content) {
+        global $wpdb;
+        
+        // 更新状态为处理中
+        $wpdb->update(
+            $wpdb->prefix . 'ai_optimizer_collected_content',
+            array('rewrite_status' => 'processing'),
+            array('id' => $content->id)
         );
         
-        return $stats ?: array(
-            'total_collected' => 0,
-            'published' => 0,
-            'drafts' => 0
+        try {
+            $rewrite_prompt = $this->build_rewrite_prompt($content);
+            
+            $response = $this->api_handler->chat_completion(array(
+                'messages' => array(
+                    array(
+                        'role' => 'user',
+                        'content' => $rewrite_prompt
+                    )
+                ),
+                'model' => AI_Optimizer_Settings::get('content_rewrite_model', 'Qwen/Qwen2.5-72B-Instruct'),
+                'temperature' => 0.7,
+                'max_tokens' => 3000
+            ));
+            
+            if ($response['success']) {
+                $rewritten_content = $this->parse_rewritten_content($response['data']['choices'][0]['message']['content']);
+                
+                // 保存重写结果
+                $wpdb->update(
+                    $wpdb->prefix . 'ai_optimizer_collected_content',
+                    array(
+                        'rewritten_title' => $rewritten_content['title'],
+                        'rewritten_content' => $rewritten_content['content'],
+                        'keywords' => $rewritten_content['keywords'],
+                        'rewrite_status' => 'completed',
+                        'rewritten_at' => current_time('mysql'),
+                        'quality_score' => $this->calculate_quality_score($rewritten_content),
+                        'seo_score' => $this->calculate_seo_score($rewritten_content)
+                    ),
+                    array('id' => $content->id)
+                );
+                
+                AI_Optimizer_Utils::log("内容重写完成", 'info', array(
+                    'content_id' => $content->id,
+                    'original_title' => $content->original_title,
+                    'rewritten_title' => $rewritten_content['title']
+                ));
+                
+            } else {
+                throw new Exception($response['message']);
+            }
+            
+        } catch (Exception $e) {
+            // 更新状态为失败
+            $wpdb->update(
+                $wpdb->prefix . 'ai_optimizer_collected_content',
+                array('rewrite_status' => 'failed'),
+                array('id' => $content->id)
+            );
+            
+            AI_Optimizer_Utils::log("内容重写失败", 'error', array(
+                'content_id' => $content->id,
+                'error' => $e->getMessage()
+            ));
+        }
+    }
+    
+    /**
+     * 构建重写提示
+     */
+    private function build_rewrite_prompt($content) {
+        $target_keywords = AI_Optimizer_Settings::get('target_keywords', '');
+        $writing_style = AI_Optimizer_Settings::get('rewriting_style', 'professional');
+        $language = $content->language ?: 'zh';
+        
+        $prompt = "请将以下内容进行完全重写，要求：\n\n";
+        $prompt .= "1. 保持原意不变，但用全新的表达方式\n";
+        $prompt .= "2. 提高内容的可读性和吸引力\n";
+        $prompt .= "3. 优化SEO，适当融入关键词：$target_keywords\n";
+        $prompt .= "4. 语言风格：$writing_style\n";
+        $prompt .= "5. 输出语言：" . ($language === 'zh' ? '中文' : '英文') . "\n\n";
+        
+        $prompt .= "原标题：{$content->original_title}\n\n";
+        $prompt .= "原内容：\n{$content->original_content}\n\n";
+        
+        $prompt .= "请按以下格式输出：\n";
+        $prompt .= "---标题---\n[重写后的标题]\n\n";
+        $prompt .= "---内容---\n[重写后的内容]\n\n";
+        $prompt .= "---关键词---\n[提取的关键词，用逗号分隔]\n";
+        
+        return $prompt;
+    }
+    
+    /**
+     * 解析重写内容
+     */
+    private function parse_rewritten_content($ai_response) {
+        $title = '';
+        $content = '';
+        $keywords = '';
+        
+        // 提取标题
+        if (preg_match('/---标题---\s*\n(.*?)\n\n/s', $ai_response, $matches)) {
+            $title = trim($matches[1]);
+        }
+        
+        // 提取内容
+        if (preg_match('/---内容---\s*\n(.*?)\n\n---关键词---/s', $ai_response, $matches)) {
+            $content = trim($matches[1]);
+        }
+        
+        // 提取关键词
+        if (preg_match('/---关键词---\s*\n(.*?)$/s', $ai_response, $matches)) {
+            $keywords = trim($matches[1]);
+        }
+        
+        return array(
+            'title' => $title ?: '重写标题',
+            'content' => $content ?: $ai_response,
+            'keywords' => $keywords
         );
+    }
+    
+    /**
+     * 计算内容质量评分
+     */
+    private function calculate_quality_score($content) {
+        $score = 0;
+        
+        // 长度评分 (30分)
+        $content_length = strlen(strip_tags($content['content']));
+        if ($content_length > 1000) {
+            $score += 30;
+        } elseif ($content_length > 500) {
+            $score += 20;
+        } elseif ($content_length > 200) {
+            $score += 10;
+        }
+        
+        // 结构评分 (25分)
+        $paragraphs = count(explode("\n", trim($content['content'])));
+        if ($paragraphs >= 3) {
+            $score += 25;
+        } elseif ($paragraphs >= 2) {
+            $score += 15;
+        }
+        
+        // 关键词评分 (25分)
+        $keywords = explode(',', $content['keywords']);
+        $keyword_count = count(array_filter($keywords));
+        if ($keyword_count >= 5) {
+            $score += 25;
+        } elseif ($keyword_count >= 3) {
+            $score += 15;
+        } elseif ($keyword_count >= 1) {
+            $score += 5;
+        }
+        
+        // 原创性评分 (20分)
+        $score += 20; // AI重写的内容默认认为是原创的
+        
+        return min($score, 100);
+    }
+    
+    /**
+     * 计算SEO评分
+     */
+    private function calculate_seo_score($content) {
+        $score = 0;
+        
+        // 标题长度 (20分)
+        $title_length = strlen($content['title']);
+        if ($title_length >= 30 && $title_length <= 60) {
+            $score += 20;
+        } elseif ($title_length >= 20 && $title_length <= 80) {
+            $score += 10;
+        }
+        
+        // 内容长度 (30分)
+        $content_length = strlen(strip_tags($content['content']));
+        if ($content_length >= 800) {
+            $score += 30;
+        } elseif ($content_length >= 400) {
+            $score += 20;
+        } elseif ($content_length >= 200) {
+            $score += 10;
+        }
+        
+        // 关键词密度 (25分)
+        $target_keywords = AI_Optimizer_Settings::get('target_keywords', '');
+        if (!empty($target_keywords)) {
+            $keywords = explode(',', $target_keywords);
+            $text = strtolower($content['title'] . ' ' . $content['content']);
+            
+            foreach ($keywords as $keyword) {
+                $keyword = trim(strtolower($keyword));
+                if (!empty($keyword) && strpos($text, $keyword) !== false) {
+                    $score += 5;
+                }
+            }
+        }
+        
+        // 内容结构 (25分)
+        if (strpos($content['content'], "\n") !== false) {
+            $score += 15; // 有段落分隔
+        }
+        if (strlen($content['keywords']) > 0) {
+            $score += 10; // 有关键词
+        }
+        
+        return min($score, 100);
+    }
+    
+    /**
+     * 自动发布内容
+     */
+    private function auto_publish_content() {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'ai_optimizer_collected_content';
+        $min_quality_score = AI_Optimizer_Settings::get('min_auto_publish_quality', 80);
+        $max_auto_publish = AI_Optimizer_Settings::get('max_auto_publish_per_day', 5);
+        
+        // 获取今天已自动发布的数量
+        $today_published = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_name 
+             WHERE publish_status = 'published' 
+             AND DATE(published_at) = %s",
+            current_time('Y-m-d')
+        ));
+        
+        if ($today_published >= $max_auto_publish) {
+            return;
+        }
+        
+        // 获取符合条件的内容
+        $content_to_publish = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table_name 
+             WHERE rewrite_status = 'completed' 
+             AND publish_status = 'draft' 
+             AND quality_score >= %d 
+             ORDER BY quality_score DESC, seo_score DESC 
+             LIMIT %d",
+            $min_quality_score,
+            $max_auto_publish - $today_published
+        ));
+        
+        foreach ($content_to_publish as $content) {
+            $this->publish_content($content);
+        }
+    }
+    
+    /**
+     * 发布内容为WordPress文章
+     */
+    private function publish_content($content) {
+        $post_data = array(
+            'post_title' => $content->rewritten_title,
+            'post_content' => $content->rewritten_content,
+            'post_status' => AI_Optimizer_Settings::get('auto_publish_status', 'draft'),
+            'post_author' => AI_Optimizer_Settings::get('default_author_id', 1),
+            'post_category' => $this->get_category_id($content->category),
+            'tags_input' => $content->keywords,
+            'meta_input' => array(
+                'ai_optimizer_source' => 'content_collector',
+                'ai_optimizer_original_url' => $content->original_url,
+                'ai_optimizer_quality_score' => $content->quality_score,
+                'ai_optimizer_seo_score' => $content->seo_score
+            )
+        );
+        
+        $post_id = wp_insert_post($post_data);
+        
+        if (!is_wp_error($post_id)) {
+            // 更新收集内容记录
+            global $wpdb;
+            $wpdb->update(
+                $wpdb->prefix . 'ai_optimizer_collected_content',
+                array(
+                    'post_id' => $post_id,
+                    'publish_status' => 'published',
+                    'published_at' => current_time('mysql')
+                ),
+                array('id' => $content->id)
+            );
+            
+            AI_Optimizer_Utils::log("内容发布成功", 'info', array(
+                'content_id' => $content->id,
+                'post_id' => $post_id,
+                'title' => $content->rewritten_title
+            ));
+        } else {
+            AI_Optimizer_Utils::log("内容发布失败", 'error', array(
+                'content_id' => $content->id,
+                'error' => $post_id->get_error_message()
+            ));
+        }
+    }
+    
+    /**
+     * 工具方法
+     */
+    private function extract_categories($item) {
+        $categories = array();
+        if ($item->get_categories()) {
+            foreach ($item->get_categories() as $category) {
+                $categories[] = $category->get_term();
+            }
+        }
+        return $categories;
+    }
+    
+    private function css_to_xpath($css_selector) {
+        // 简单的CSS到XPath转换
+        $xpath = str_replace(array('.', '#'), array('[@class="', '[@id="'], $css_selector);
+        $xpath = str_replace('"', '"]', $xpath);
+        return '//' . $xpath;
+    }
+    
+    private function get_nested_value($array, $path) {
+        $keys = explode('.', $path);
+        $value = $array;
+        
+        foreach ($keys as $key) {
+            if (isset($value[$key])) {
+                $value = $value[$key];
+            } else {
+                return null;
+            }
+        }
+        
+        return $value;
+    }
+    
+    private function detect_language($text) {
+        // 简单的语言检测
+        if (preg_match('/[\x{4e00}-\x{9fff}]/u', $text)) {
+            return 'zh';
+        }
+        return 'en';
+    }
+    
+    private function get_category_id($category_name) {
+        if (empty($category_name)) {
+            return array();
+        }
+        
+        $category = get_category_by_slug(sanitize_title($category_name));
+        if ($category) {
+            return array($category->term_id);
+        }
+        
+        // 创建新分类
+        $category_id = wp_create_category($category_name);
+        return $category_id ? array($category_id) : array();
+    }
+    
+    private function update_source_status($source_id, $status, $collected_count = 0) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'ai_optimizer_content_sources';
+        
+        $update_data = array(
+            'status' => $status,
+            'last_collected' => current_time('mysql'),
+            'updated_at' => current_time('mysql')
+        );
+        
+        if ($collected_count > 0) {
+            $update_data['total_collected'] = $wpdb->get_var($wpdb->prepare(
+                "SELECT total_collected FROM $table_name WHERE id = %d",
+                $source_id
+            )) + $collected_count;
+        }
+        
+        $wpdb->update($table_name, $update_data, array('id' => $source_id));
+    }
+    
+    /**
+     * AJAX处理方法
+     */
+    public function handle_add_source() {
+        if (!AI_Optimizer_Security::verify_nonce($_POST['nonce'] ?? '')) {
+            wp_die(__('安全检查失败', 'ai-website-optimizer'));
+        }
+        
+        if (!AI_Optimizer_Security::check_permission('manage_settings')) {
+            wp_die(__('权限不足', 'ai-website-optimizer'));
+        }
+        
+        $name = sanitize_text_field($_POST['name'] ?? '');
+        $type = sanitize_text_field($_POST['type'] ?? 'rss');
+        $url = esc_url_raw($_POST['url'] ?? '');
+        $settings = $_POST['settings'] ?? array();
+        
+        if (empty($name) || empty($url)) {
+            wp_send_json_error('名称和URL不能为空');
+        }
+        
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ai_optimizer_content_sources';
+        
+        $result = $wpdb->insert($table_name, array(
+            'name' => $name,
+            'type' => $type,
+            'url' => $url,
+            'settings' => wp_json_encode($settings),
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql')
+        ));
+        
+        if ($result !== false) {
+            wp_send_json_success(array(
+                'message' => '内容源添加成功',
+                'id' => $wpdb->insert_id
+            ));
+        } else {
+            wp_send_json_error('添加失败');
+        }
+    }
+    
+    public function handle_remove_source() {
+        if (!AI_Optimizer_Security::verify_nonce($_POST['nonce'] ?? '')) {
+            wp_die(__('安全检查失败', 'ai-website-optimizer'));
+        }
+        
+        if (!AI_Optimizer_Security::check_permission('manage_settings')) {
+            wp_die(__('权限不足', 'ai-website-optimizer'));
+        }
+        
+        $source_id = intval($_POST['source_id'] ?? 0);
+        
+        if ($source_id <= 0) {
+            wp_send_json_error('无效的源ID');
+        }
+        
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ai_optimizer_content_sources';
+        
+        $result = $wpdb->delete($table_name, array('id' => $source_id));
+        
+        if ($result !== false) {
+            wp_send_json_success('内容源删除成功');
+        } else {
+            wp_send_json_error('删除失败');
+        }
+    }
+    
+    public function handle_test_source() {
+        if (!AI_Optimizer_Security::verify_nonce($_POST['nonce'] ?? '')) {
+            wp_die(__('安全检查失败', 'ai-website-optimizer'));
+        }
+        
+        $source_id = intval($_POST['source_id'] ?? 0);
+        
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ai_optimizer_content_sources';
+        
+        $source = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE id = %d",
+            $source_id
+        ));
+        
+        if (!$source) {
+            wp_send_json_error('源不存在');
+        }
+        
+        try {
+            $items = $this->collect_from_source($source);
+            wp_send_json_success(array(
+                'message' => '测试成功',
+                'items_found' => count($items)
+            ));
+        } catch (Exception $e) {
+            wp_send_json_error('测试失败: ' . $e->getMessage());
+        }
+    }
+    
+    public function handle_manual_collection() {
+        if (!AI_Optimizer_Security::verify_nonce($_POST['nonce'] ?? '')) {
+            wp_die(__('安全检查失败', 'ai-website-optimizer'));
+        }
+        
+        if (!AI_Optimizer_Security::check_permission('edit_posts')) {
+            wp_die(__('权限不足', 'ai-website-optimizer'));
+        }
+        
+        $this->run_content_collection();
+        wp_send_json_success('手动收集完成');
+    }
+    
+    public function handle_publish_content() {
+        if (!AI_Optimizer_Security::verify_nonce($_POST['nonce'] ?? '')) {
+            wp_die(__('安全检查失败', 'ai-website-optimizer'));
+        }
+        
+        if (!AI_Optimizer_Security::check_permission('publish_posts')) {
+            wp_die(__('权限不足', 'ai-website-optimizer'));
+        }
+        
+        $content_id = intval($_POST['content_id'] ?? 0);
+        
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ai_optimizer_collected_content';
+        
+        $content = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE id = %d",
+            $content_id
+        ));
+        
+        if (!$content) {
+            wp_send_json_error('内容不存在');
+        }
+        
+        if ($content->rewrite_status !== 'completed') {
+            wp_send_json_error('内容尚未重写完成');
+        }
+        
+        $this->publish_content($content);
+        wp_send_json_success('内容发布成功');
     }
 }
