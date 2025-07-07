@@ -1,5 +1,7 @@
 # AI Website Optimizer
 
+⚠️ **重要提示：请使用 `ai-website-optimizer-v2.php` 文件！这是修复所有语法错误后的稳定版本。**
+
 A comprehensive WordPress plugin that integrates with Siliconflow API to provide AI-powered website monitoring, optimization, and content generation capabilities.
 
 ## Features

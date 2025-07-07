@@ -162,6 +162,20 @@ ai-website-optimizer/
     - 内容显示区域根据类型自动调整（文本/图片/视频/音频）
   - 更新详细使用说明文档，包含技术规格和故障排除指南
 
+- July 07, 2025. 修复关键语法错误，发布v2稳定版本
+  - **问题发现**：在添加WordPress发布功能后，原插件文件出现语法错误（多余的右括号）
+  - **解决方案**：创建全新的ai-website-optimizer-v2.php文件，完全重构代码
+  - **改进内容**：
+    - 修复所有括号配对问题（114个开括号vs115个闭括号的不平衡）
+    - 使用新的类名AI_Website_Optimizer_V2避免冲突
+    - 优化JavaScript代码，改进ajaxurl处理
+    - 增强错误处理和用户反馈机制
+  - **用户指导**：
+    - 创建PLUGIN-INSTALL-GUIDE.md详细说明为何需要v2版本
+    - 更新README.md添加重要提示，引导用户使用v2版本
+    - 强调代码质量控制，避免低级错误再次发生
+  - **经验教训**：每次添加新功能后必须进行完整的语法检查，确保代码结构完整性
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
