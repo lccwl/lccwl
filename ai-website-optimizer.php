@@ -159,6 +159,44 @@ class AI_Website_Optimizer {
                     });
                 });
                 
+                // 内容类型切换处理
+                $("#content_type").change(function() {
+                    var type = $(this).val();
+                    if (type === "video") {
+                        $("#video_model_row").show();
+                        $("#video_model").trigger("change");
+                    } else {
+                        $("#video_model_row, #image_input_row").hide();
+                    }
+                });
+                
+                // 视频模型切换处理
+                $("#video_model").change(function() {
+                    var model = $(this).val();
+                    if (model.includes("I2V")) {
+                        $("#image_input_row").show();
+                    } else {
+                        $("#image_input_row").hide();
+                    }
+                });
+                
+                // 处理图片文件上传为base64
+                $("#reference_image_file").change(function() {
+                    var file = this.files[0];
+                    if (file) {
+                        var reader = new FileReader();
+                        reader.onload = function(e) {
+                            var base64 = e.target.result;
+                            $("#reference_image_url").val(base64);
+                            $("#image_upload_status").text("图片已加载").css("color", "green");
+                        };
+                        reader.onerror = function() {
+                            $("#image_upload_status").text("图片加载失败").css("color", "red");
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                });
+                
                 // AI内容生成 - 优化版本
                 $("#generate-content-btn").click(function() {
                     var btn = $(this);
@@ -176,12 +214,23 @@ class AI_Website_Optimizer {
                     // 显示实时状态
                     showGenerationStatus(contentType);
                     
-                    $.post(ajaxurl, {
+                    var postData = {
                         action: "ai_opt_generate_content",
                         nonce: nonce,
                         content_type: contentType,
                         prompt: prompt
-                    }, function(response) {
+                    };
+                    
+                    // 如果是视频生成，添加额外参数
+                    if (contentType === "video") {
+                        postData.video_model = $("#video_model").val();
+                        var imageUrl = $("#reference_image_url").val();
+                        if (imageUrl) {
+                            postData.reference_image = imageUrl;
+                        }
+                    }
+                    
+                    $.post(ajaxurl, postData, function(response) {
                         if (response.success) {
                             window.AIOptimizer.currentContentType = response.data.type;
                             window.AIOptimizer.currentContent = response.data.content;
@@ -822,6 +871,30 @@ class AI_Website_Optimizer {
                                 </select>
                             </td>
                         </tr>
+                        <tr id="video_model_row" style="display: none;">
+                            <th scope="row">视频模型</th>
+                            <td>
+                                <select name="video_model" id="video_model" class="regular-text">
+                                    <option value="Wan-AI/Wan2.1-T2V-14B-Turbo">文本到视频 (T2V) - 快速版</option>
+                                    <option value="Wan-AI/Wan2.1-T2V-14B">文本到视频 (T2V) - 标准版</option>
+                                    <option value="Wan-AI/Wan2.1-I2V-14B-720P-Turbo">图片到视频 (I2V) - 快速版</option>
+                                    <option value="Wan-AI/Wan2.1-I2V-14B-720P">图片到视频 (I2V) - 标准版</option>
+                                    <option value="tencent/HunyuanVideo">腾讯混元视频</option>
+                                </select>
+                                <p class="description">选择不同的模型生成视频。I2V模型需要上传参考图片。</p>
+                            </td>
+                        </tr>
+                        <tr id="image_input_row" style="display: none;">
+                            <th scope="row">参考图片</th>
+                            <td>
+                                <input type="text" id="reference_image_url" name="reference_image_url" class="large-text" placeholder="输入图片URL地址">
+                                <p class="description">或者使用base64格式：data:image/png;base64,...</p>
+                                <div style="margin-top: 10px;">
+                                    <input type="file" id="reference_image_file" accept="image/*">
+                                    <span id="image_upload_status" style="margin-left: 10px;"></span>
+                                </div>
+                            </td>
+                        </tr>
                         <tr>
                             <th scope="row">提示词</th>
                             <td>
@@ -1065,14 +1138,22 @@ class AI_Website_Optimizer {
         
         $content_type = sanitize_text_field($_POST['content_type'] ?? 'text');
         $prompt = sanitize_textarea_field($_POST['prompt'] ?? '');
+        $video_model = sanitize_text_field($_POST['video_model'] ?? '');
+        $reference_image = sanitize_text_field($_POST['reference_image'] ?? '');
         
         if (empty($prompt)) {
             wp_send_json_error(array('message' => '请输入提示词'));
             return;
         }
         
+        // 如果是视频生成且选择了I2V模型但没有图片
+        if ($content_type === 'video' && strpos($video_model, 'I2V') !== false && empty($reference_image)) {
+            wp_send_json_error(array('message' => '当前视频模型需要参考图片，请先上传图片'));
+            return;
+        }
+        
         // 调用Siliconflow API生成内容
-        $response = $this->call_siliconflow_api($content_type, $prompt, $api_key);
+        $response = $this->call_siliconflow_api($content_type, $prompt, $api_key, $video_model, $reference_image);
         
         if (isset($response['error'])) {
             wp_send_json_error(array('message' => $response['error']));
@@ -1173,14 +1254,14 @@ class AI_Website_Optimizer {
         }
     }
     
-    private function call_siliconflow_api($type, $prompt, $api_key) {
+    private function call_siliconflow_api($type, $prompt, $api_key, $video_model = '', $reference_image = '') {
         switch ($type) {
             case 'text':
                 return $this->generate_text($prompt, $api_key);
             case 'image':
                 return $this->generate_image($prompt, $api_key);
             case 'video':
-                return $this->generate_video($prompt, $api_key);
+                return $this->generate_video($prompt, $api_key, $video_model, $reference_image);
             case 'audio':
                 return $this->generate_audio($prompt, $api_key);
             default:
@@ -1264,15 +1345,24 @@ class AI_Website_Optimizer {
         return array('error' => '图片生成失败');
     }
     
-    private function generate_video($prompt, $api_key) {
+    private function generate_video($prompt, $api_key, $video_model = '', $reference_image = '') {
         // 第一步：提交视频生成请求
         $submit_url = 'https://api.siliconflow.cn/v1/video/submit';
         
+        // 使用传入的模型或默认模型
+        $model = !empty($video_model) ? $video_model : 'Wan-AI/Wan2.1-T2V-14B-Turbo';
+        
         $data = array(
-            'model' => 'Lightricks/LTX-Video',
+            'model' => $model,
             'prompt' => $prompt,
-            'num_inference_steps' => 30
+            'image_size' => '1280x720',
+            'seed' => rand(0, 2147483647)
         );
+        
+        // 如果是I2V模型且有参考图片，添加图片参数
+        if (strpos($model, 'I2V') !== false && !empty($reference_image)) {
+            $data['image'] = $reference_image;
+        }
         
         $args = array(
             'headers' => array(
@@ -1327,8 +1417,14 @@ class AI_Website_Optimizer {
                 $status_body = wp_remote_retrieve_body($status_response);
                 $status_result = json_decode($status_body, true);
                 
-                if (isset($status_result['videoUrl'])) {
-                    return array('content' => $status_result['videoUrl'], 'type' => 'video');
+                if (isset($status_result['status'])) {
+                    if ($status_result['status'] === 'Succeed' && isset($status_result['results']['videos'][0]['url'])) {
+                        return array('content' => $status_result['results']['videos'][0]['url'], 'type' => 'video');
+                    } elseif ($status_result['status'] === 'Failed') {
+                        $reason = isset($status_result['reason']) ? $status_result['reason'] : '未知错误';
+                        return array('error' => '视频生成失败: ' . $reason);
+                    }
+                    // 如果状态是 InQueue 或 InProgress，继续等待
                 }
             }
         }

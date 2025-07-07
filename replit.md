@@ -210,6 +210,27 @@ ai-website-optimizer/
     - 实时显示系统活动：性能、错误、数据库、插件、用户、安全
     - 自动发布日志记录每次生成和发布状态
 
+- July 07, 2025. 修复视频生成API调用，支持图片到视频功能
+  - **问题解决**：
+    - 修复"Model disabled"错误：更换为Siliconflow支持的视频模型
+    - 解决"当前模型需要参考图片"问题：添加图片上传支持
+  - **功能增强**：
+    - 添加视频模型选择下拉框，支持5种不同的视频生成模型
+    - 区分文本到视频(T2V)和图片到视频(I2V)模型
+    - 添加参考图片上传功能，支持URL和文件上传(自动转base64)
+    - 自动检测模型类型，I2V模型时显示图片上传界面
+  - **技术改进**：
+    - 更新generate_video函数，使用正确的API端点和参数格式
+    - 实现两步视频生成流程：submit请求 → status轮询
+    - 改进错误处理，显示详细的API错误信息
+    - 前端JavaScript自动处理图片文件转换为base64格式
+  - **支持的视频模型**：
+    - Wan-AI/Wan2.1-T2V-14B-Turbo (文本到视频-快速)
+    - Wan-AI/Wan2.1-T2V-14B (文本到视频-标准)
+    - Wan-AI/Wan2.1-I2V-14B-720P-Turbo (图片到视频-快速)
+    - Wan-AI/Wan2.1-I2V-14B-720P (图片到视频-标准)
+    - tencent/HunyuanVideo (腾讯混元视频)
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
