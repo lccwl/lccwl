@@ -59,6 +59,7 @@ class AI_Website_Optimizer {
         add_action('wp_ajax_ai_opt_publish_to_wordpress', array($this, 'ajax_publish_to_wordpress'));
         add_action('wp_ajax_ai_opt_save_auto_settings', array($this, 'ajax_save_auto_settings'));
         add_action('wp_ajax_ai_opt_get_monitor_logs', array($this, 'ajax_get_monitor_logs'));
+        add_action('wp_ajax_ai_opt_save_competitors', array($this, 'ajax_save_competitors'));
         
         // 新增的AJAX处理函数
         add_action('wp_ajax_ai_opt_run_seo_analysis', array($this, 'ajax_run_seo_analysis'));
@@ -1037,8 +1038,18 @@ class AI_Website_Optimizer {
                                 <option value="Qwen/Qwen2.5-72B-Instruct">Qwen/Qwen2.5-72B (快速分析)</option>
                                 <option value="meta-llama/Meta-Llama-3.1-405B-Instruct">Meta-Llama-3.1-405B (专业版)</option>
                                 <option value="deepseek-ai/DeepSeek-V2.5">DeepSeek-V2.5 (技术优化)</option>
+                                <option value="custom">自定义AI模型</option>
                             </select>
+                            <input type="text" id="custom_ai_model" style="display: none; margin-top: 10px;" class="regular-text" placeholder="输入自定义模型名称，如：user/custom-model">
                             <p class="description">选择不同的AI模型进行SEO分析，推荐使用QwQ-32B获得最佳分析效果</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><label for="competitor_websites">竞争对手网站</label></th>
+                        <td>
+                            <textarea id="competitor_websites" name="competitor_websites" rows="3" class="large-text" placeholder="每行输入一个竞争对手网站URL，例如：&#10;https://competitor1.com&#10;https://competitor2.com"><?php echo esc_textarea(implode("\n", get_option('ai_seo_competitor_urls', array()))); ?></textarea>
+                            <p class="description">输入您的竞争对手网站URL，AI将分析这些网站并提供对比建议。如不填写，系统将根据优化策略自动推荐。</p>
+                            <button type="button" id="save-competitors" class="button button-secondary">保存竞争对手设置</button>
                         </td>
                     </tr>
                     <tr>
@@ -1210,10 +1221,55 @@ class AI_Website_Optimizer {
             var nonce = "<?php echo wp_create_nonce('ai-opt-nonce'); ?>";
             var ajaxurl = "<?php echo admin_url('admin-ajax.php'); ?>";
             
+            // AI模型选择变化事件
+            $("#seo_ai_model").change(function() {
+                if ($(this).val() === "custom") {
+                    $("#custom_ai_model").show();
+                } else {
+                    $("#custom_ai_model").hide();
+                }
+            });
+            
+            // 保存竞争对手设置
+            $("#save-competitors").click(function() {
+                var btn = $(this);
+                var competitorUrls = $("#competitor_websites").val().split('\n').filter(function(url) {
+                    return url.trim() !== '';
+                });
+                
+                btn.prop("disabled", true).text("保存中...");
+                
+                $.post(ajaxurl, {
+                    action: "ai_opt_save_competitors",
+                    nonce: nonce,
+                    competitor_urls: competitorUrls
+                }, function(response) {
+                    if (response.success) {
+                        alert("竞争对手设置已保存！");
+                    } else {
+                        alert("保存失败: " + (response.data.message || "未知错误"));
+                    }
+                    btn.prop("disabled", false).text("保存竞争对手设置");
+                }).fail(function() {
+                    alert("网络错误，请稍后重试");
+                    btn.prop("disabled", false).text("保存竞争对手设置");
+                });
+            });
+            
             // 开始AI深度分析
             $("#start-ai-seo-analysis").click(function() {
                 var btn = $(this);
                 var aiModel = $("#seo_ai_model").val();
+                var optimizationStrategy = $("#optimization_strategy").val();
+                
+                // 获取分析范围复选框状态
+                var analysisScope = {
+                    technical: $("#analyze_technical").is(":checked"),
+                    content: $("#analyze_content").is(":checked"),
+                    performance: $("#analyze_performance").is(":checked"),
+                    competitors: $("#analyze_competitors").is(":checked"),
+                    search_latest: $("#search_latest_seo").is(":checked")
+                };
                 
                 btn.prop("disabled", true).text("🔄 分析中...");
                 $("#analysis-progress").show();
@@ -1225,7 +1281,9 @@ class AI_Website_Optimizer {
                 $.post(ajaxurl, {
                     action: "ai_opt_run_seo_analysis",
                     nonce: nonce,
-                    ai_model: aiModel
+                    ai_model: aiModel,
+                    optimization_strategy: optimizationStrategy,
+                    analysis_scope: analysisScope
                 }, function(response) {
                     if (response.success) {
                         displayAnalysisResults(response.data);
@@ -1939,8 +1997,9 @@ class AI_Website_Optimizer {
         }
         
         if (is_wp_error($response)) {
-            AI_Optimizer_Utils::log('Video generation submit failed: ' . $response->get_error_message(), 'error');
-            return array('error' => '网络连接失败，请检查网络设置: ' . $response->get_error_message());
+            $error_message = $response->get_error_message();
+            error_log('视频生成提交失败: ' . $error_message);
+            return array('error' => '网络连接失败，请检查API密钥和网络设置: ' . $error_message);
         }
         
         $body = wp_remote_retrieve_body($response);
@@ -1949,12 +2008,26 @@ class AI_Website_Optimizer {
         if (!isset($result['requestId'])) {
             $error_msg = '视频生成请求失败';
             if (isset($result['error'])) {
-                $error_msg .= ': ' . $result['error']['message'];
+                if (is_array($result['error'])) {
+                    $error_msg .= ': ' . (isset($result['error']['message']) ? $result['error']['message'] : '未知API错误');
+                } else {
+                    $error_msg .= ': ' . $result['error'];
+                }
             } elseif (isset($result['message'])) {
                 $error_msg .= ': ' . $result['message'];
+            } elseif (isset($result['detail'])) {
+                $error_msg .= ': ' . $result['detail'];
             }
-            AI_Optimizer_Utils::log('Video generation error: ' . $error_msg, 'error');
-            return array('error' => $error_msg);
+            
+            // 常见错误处理
+            if (strpos($body, 'unauthorized') !== false || strpos($body, '401') !== false) {
+                $error_msg = 'API密钥无效，请检查Siliconflow API密钥配置';
+            } elseif (strpos($body, 'model') !== false && strpos($body, 'disabled') !== false) {
+                $error_msg = '当前视频模型不可用，请尝试其他模型或联系API提供商';
+            }
+            
+            error_log('视频生成错误详情: ' . $body);
+            return array('error' => $error_msg . '。API响应: ' . substr($body, 0, 200));
         }
         
         $request_id = $result['requestId'];
@@ -2060,30 +2133,75 @@ class AI_Website_Optimizer {
         $args = array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $api_key,
-                'Content-Type' => 'application/json'
+                'Content-Type' => 'application/json',
+                'User-Agent' => 'AI-Website-Optimizer/' . AI_OPT_VERSION
             ),
             'body' => json_encode($data),
-            'timeout' => 60
+            'timeout' => 120,
+            'sslverify' => false
         );
         
         $response = wp_remote_post($url, $args);
         
         if (is_wp_error($response)) {
-            return array('error' => $response->get_error_message());
+            $error_message = $response->get_error_message();
+            error_log('音频生成网络错误: ' . $error_message);
+            return array('error' => '音频生成网络错误: ' . $error_message);
         }
         
+        $http_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
+        
+        // 检查HTTP状态码
+        if ($http_code !== 200) {
+            error_log('音频生成HTTP错误: ' . $http_code . ' - ' . $body);
+            
+            if ($http_code === 401) {
+                return array('error' => 'API密钥无效，请检查配置');
+            } elseif ($http_code === 400) {
+                return array('error' => '音频生成参数错误，请检查输入内容');
+            } elseif ($http_code === 429) {
+                return array('error' => 'API调用频率限制，请稍后重试');
+            } else {
+                return array('error' => '音频生成失败，HTTP状态码: ' . $http_code);
+            }
+        }
+        
+        // 尝试解析JSON响应
         $result = json_decode($body, true);
         
-        if (isset($result['audio'])) {
-            return array('content' => $result['audio'], 'type' => 'audio');
-        } elseif (isset($result['url'])) {
-            return array('content' => $result['url'], 'type' => 'audio');
-        } elseif (isset($result['error'])) {
-            return array('error' => '音频生成失败: ' . $result['error']['message']);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            // 如果不是JSON，可能直接返回了音频数据
+            if (strlen($body) > 1000) {
+                // 检查是否为base64编码的音频
+                if (base64_decode($body, true) !== false) {
+                    return array('content' => $body, 'type' => 'audio_base64');
+                } else {
+                    return array('content' => base64_encode($body), 'type' => 'audio_base64');
+                }
+            } else {
+                error_log('音频生成返回无效数据: ' . substr($body, 0, 200));
+                return array('error' => '音频生成返回数据格式错误');
+            }
         }
         
-        return array('error' => '音频生成失败: 返回格式不正确');
+        // 处理标准JSON响应格式
+        if (isset($result['audio'])) {
+            return array('content' => $result['audio'], 'type' => 'audio_base64');
+        } elseif (isset($result['url'])) {
+            return array('content' => $result['url'], 'type' => 'audio_url');
+        } elseif (isset($result['data'])) {
+            return array('content' => $result['data'], 'type' => 'audio_base64');
+        } elseif (isset($result['error'])) {
+            $error_msg = is_array($result['error']) ? 
+                (isset($result['error']['message']) ? $result['error']['message'] : '未知错误') : 
+                $result['error'];
+            return array('error' => '音频生成失败: ' . $error_msg);
+        }
+        
+        // 如果没有预期的字段，记录完整响应用于调试
+        error_log('音频生成意外响应格式: ' . $body);
+        return array('error' => '音频生成返回格式不正确，请检查API文档或联系技术支持');
     }
     
     // 保存自动发布设置
@@ -2110,32 +2228,200 @@ class AI_Website_Optimizer {
         }
         
         $types = isset($_POST['types']) ? $_POST['types'] : array();
+        $logs = $this->get_real_system_logs($types);
+        
+        wp_send_json_success(array('logs' => $logs));
+    }
+    
+    /**
+     * 获取真实的系统监控日志
+     */
+    private function get_real_system_logs($types) {
+        global $wpdb;
         $logs = array();
         
-        // 模拟一些实时日志数据
-        $rand = rand(1, 10);
-        
-        if (in_array('performance', $types) && $rand > 7) {
+        // 性能监控 - 真实数据
+        if (in_array('performance', $types)) {
+            // 获取数据库查询时间
+            $query_time = $wpdb->num_queries > 0 ? timer_stop() : 0;
+            $memory_usage = memory_get_usage(true);
+            $peak_memory = memory_get_peak_usage(true);
+            
             $logs[] = array(
                 'type' => 'info',
-                'message' => '页面加载性能',
-                'details' => '平均响应时间: ' . rand(100, 500) . 'ms'
+                'message' => '性能监控',
+                'details' => sprintf('数据库查询: %d次, 内存使用: %s, 峰值内存: %s', 
+                    $wpdb->num_queries, 
+                    size_format($memory_usage), 
+                    size_format($peak_memory)
+                )
+            );
+            
+            // 检查页面加载时间
+            if (defined('WP_START_TIMESTAMP')) {
+                $load_time = microtime(true) - WP_START_TIMESTAMP;
+                if ($load_time > 3) {
+                    $logs[] = array(
+                        'type' => 'warning',
+                        'message' => '页面加载缓慢',
+                        'details' => sprintf('页面加载时间: %.2f秒，建议优化', $load_time)
+                    );
+                }
+            }
+        }
+        
+        // 错误监控 - 检查WordPress错误日志
+        if (in_array('error', $types)) {
+            $error_log = $this->check_wordpress_errors();
+            if (!empty($error_log)) {
+                foreach ($error_log as $error) {
+                    $logs[] = array(
+                        'type' => 'error',
+                        'message' => 'PHP错误检测',
+                        'details' => $error
+                    );
+                }
+            }
+        }
+        
+        // 数据库监控 - 真实数据库状态
+        if (in_array('database', $types)) {
+            $db_size = $this->get_database_size();
+            $table_count = $wpdb->get_var("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()");
+            
+            $logs[] = array(
+                'type' => 'info',
+                'message' => '数据库状态',
+                'details' => sprintf('数据库大小: %s, 表数量: %d', size_format($db_size), $table_count)
+            );
+            
+            // 检查数据库连接
+            if ($wpdb->last_error) {
+                $logs[] = array(
+                    'type' => 'error',
+                    'message' => '数据库错误',
+                    'details' => $wpdb->last_error
+                );
+            }
+        }
+        
+        // 插件监控 - 真实插件状态
+        if (in_array('plugin', $types)) {
+            $active_plugins = get_option('active_plugins');
+            $all_plugins = get_plugins();
+            $inactive_count = count($all_plugins) - count($active_plugins);
+            
+            $logs[] = array(
+                'type' => 'info',
+                'message' => '插件状态',
+                'details' => sprintf('活跃插件: %d个, 非活跃插件: %d个', count($active_plugins), $inactive_count)
             );
         }
         
-        if (in_array('error', $types) && $rand > 8) {
-            $logs[] = array(
-                'type' => 'error',
-                'message' => 'PHP错误检测',
-                'details' => '在 /wp-content/themes/theme-name/functions.php 第 123 行发现未定义变量'
-            );
+        // 用户活动监控
+        if (in_array('user', $types)) {
+            $recent_users = get_users(array(
+                'meta_query' => array(
+                    array(
+                        'key' => 'last_activity',
+                        'value' => date('Y-m-d H:i:s', strtotime('-1 hour')),
+                        'compare' => '>'
+                    )
+                )
+            ));
+            
+            if (!empty($recent_users)) {
+                $logs[] = array(
+                    'type' => 'info',
+                    'message' => '用户活动',
+                    'details' => sprintf('过去1小时内有 %d 位用户活跃', count($recent_users))
+                );
+            }
         }
         
-        if (in_array('database', $types) && $rand > 6) {
-            $logs[] = array(
-                'type' => 'info',
-                'message' => '数据库查询',
-                'details' => '执行了 ' . rand(10, 50) . ' 次查询，总时间: ' . rand(10, 100) . 'ms'
+        // 安全监控
+        if (in_array('security', $types)) {
+            // 检查失败的登录尝试
+            $failed_logins = get_option('ai_opt_failed_logins', array());
+            $recent_failures = array_filter($failed_logins, function($login) {
+                return $login['time'] > time() - 3600; // 过去1小时
+            });
+            
+            if (!empty($recent_failures)) {
+                $logs[] = array(
+                    'type' => 'warning',
+                    'message' => '安全警告',
+                    'details' => sprintf('过去1小时检测到 %d 次失败登录尝试', count($recent_failures))
+                );
+            }
+            
+            // 检查WordPress版本
+            $wp_version = get_bloginfo('version');
+            $latest_version = get_transient('ai_opt_latest_wp_version');
+            if (!$latest_version) {
+                $version_check = wp_remote_get('https://api.wordpress.org/core/version-check/1.7/');
+                if (!is_wp_error($version_check)) {
+                    $version_data = json_decode(wp_remote_retrieve_body($version_check), true);
+                    if (isset($version_data['offers'][0]['version'])) {
+                        $latest_version = $version_data['offers'][0]['version'];
+                        set_transient('ai_opt_latest_wp_version', $latest_version, 3600);
+                    }
+                }
+            }
+            
+            if ($latest_version && version_compare($wp_version, $latest_version, '<')) {
+                $logs[] = array(
+                    'type' => 'warning',
+                    'message' => '版本更新',
+                    'details' => sprintf('WordPress版本 %s 可更新到 %s', $wp_version, $latest_version)
+                );
+            }
+        }
+        
+        return $logs;
+    }
+    
+    /**
+     * 检查WordPress错误日志
+     */
+    private function check_wordpress_errors() {
+        $errors = array();
+        
+        // 检查PHP错误日志
+        if (defined('WP_DEBUG_LOG') && WP_DEBUG_LOG) {
+            $log_file = WP_CONTENT_DIR . '/debug.log';
+            if (file_exists($log_file)) {
+                $log_content = file_get_contents($log_file);
+                $recent_errors = array();
+                
+                // 获取最近的错误（简化版本）
+                $lines = explode("\n", $log_content);
+                $recent_lines = array_slice($lines, -10); // 最后10行
+                
+                foreach ($recent_lines as $line) {
+                    if (strpos($line, 'ERROR') !== false || strpos($line, 'Fatal') !== false) {
+                        $errors[] = substr($line, 0, 200) . '...'; // 限制长度
+                    }
+                }
+            }
+        }
+        
+        return $errors;
+    }
+    
+    /**
+     * 获取数据库大小
+     */
+    private function get_database_size() {
+        global $wpdb;
+        
+        $result = $wpdb->get_row("
+            SELECT SUM(data_length + index_length) as size 
+            FROM information_schema.TABLES 
+            WHERE table_schema = DATABASE()
+        ");
+        
+        return $result ? $result->size : 0;
             );
         }
         
@@ -2341,9 +2627,27 @@ class AI_Website_Optimizer {
         }
         
         $ai_model = sanitize_text_field($_POST['ai_model'] ?? 'Qwen/QwQ-32B-Preview');
+        $custom_model = sanitize_text_field($_POST['custom_ai_model'] ?? '');
+        $optimization_strategy = sanitize_text_field($_POST['optimization_strategy'] ?? 'comprehensive');
+        $analysis_scope = $_POST['analysis_scope'] ?? array();
+        
+        // 支持自定义AI模型
+        if ($ai_model === 'custom' && !empty($custom_model)) {
+            $ai_model = $custom_model;
+        } elseif ($ai_model === 'custom') {
+            wp_send_json_error(array('message' => '请输入自定义AI模型名称'));
+            return;
+        }
+        
+        // 验证API密钥是否配置
+        $api_key = get_option('ai_opt_api_key') ?: get_option('ai_optimizer_api_key') ?: get_option('siliconflow_api_key');
+        if (empty($api_key)) {
+            wp_send_json_error(array('message' => 'API密钥未配置，请到设置页面配置Siliconflow API密钥'));
+            return;
+        }
         
         $seo_analyzer = new AI_SEO_Analyzer();
-        $results = $seo_analyzer->analyze_website_seo($ai_model);
+        $results = $seo_analyzer->analyze_website_seo($ai_model, $optimization_strategy, $analysis_scope);
         
         if (isset($results['error'])) {
             wp_send_json_error(array('message' => $results['error']));
@@ -2444,6 +2748,33 @@ class AI_Website_Optimizer {
         } else {
             wp_send_json_error(array('message' => '设置更新失败'));
         }
+    }
+    
+    /**
+     * AJAX: 保存竞争对手设置
+     */
+    public function ajax_save_competitors() {
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'ai-opt-nonce') || !current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $competitor_urls = $_POST['competitor_urls'] ?? array();
+        
+        // 验证URL格式
+        $valid_urls = array();
+        foreach ($competitor_urls as $url) {
+            $url = trim($url);
+            if (!empty($url) && filter_var($url, FILTER_VALIDATE_URL)) {
+                $valid_urls[] = $url;
+            }
+        }
+        
+        update_option('ai_seo_competitor_urls', $valid_urls);
+        
+        wp_send_json_success(array(
+            'message' => '竞争对手设置已保存',
+            'saved_urls' => $valid_urls
+        ));
     }
 }
 

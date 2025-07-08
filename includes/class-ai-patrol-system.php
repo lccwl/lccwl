@@ -19,7 +19,9 @@ class AI_Patrol_System {
     public function __construct() {
         global $wpdb;
         $this->wp_db = $wpdb;
-        $this->api_key = get_option('ai_opt_api_key');
+        
+        // 修复API密钥获取逻辑
+        $this->api_key = get_option('ai_opt_api_key') ?: get_option('ai_optimizer_api_key') ?: get_option('siliconflow_api_key');
         $this->patrol_settings = get_option('ai_patrol_settings', array(
             'enabled' => false,
             'interval' => 'hourly',

@@ -19,7 +19,9 @@ class AI_SEO_Analyzer {
     public function __construct() {
         global $wpdb;
         $this->wp_db = $wpdb;
-        $this->api_key = get_option('ai_opt_api_key');
+        
+        // 修复API密钥获取逻辑 - 支持多种配置项名称
+        $this->api_key = get_option('ai_opt_api_key') ?: get_option('ai_optimizer_api_key') ?: get_option('siliconflow_api_key');
         
         // 初始化数据库表
         $this->create_seo_tables();
@@ -67,29 +69,54 @@ class AI_SEO_Analyzer {
     /**
      * 执行完整的SEO分析
      */
-    public function analyze_website_seo($selected_ai_model = 'Qwen/QwQ-32B-Preview') {
+    public function analyze_website_seo($selected_ai_model = 'Qwen/QwQ-32B-Preview', $optimization_strategy = 'comprehensive', $analysis_scope = array()) {
         $results = array();
+        
+        // 设置默认分析范围
+        $default_scope = array(
+            'technical' => true,
+            'content' => true,
+            'performance' => true,
+            'competitors' => true,
+            'search_latest' => true
+        );
+        $analysis_scope = array_merge($default_scope, $analysis_scope);
         
         // 1. 获取网站基本信息
         $site_info = $this->get_site_info();
         
-        // 2. 分析页面结构
-        $structure_analysis = $this->analyze_page_structure();
+        $structure_analysis = array();
+        $technical_seo = array();
+        $content_analysis = array();
+        $competitor_analysis = array();
+        $seo_knowledge = array();
         
-        // 3. 检查技术SEO
-        $technical_seo = $this->analyze_technical_seo();
+        // 根据分析范围执行不同的分析
+        if ($analysis_scope['technical']) {
+            // 2. 分析页面结构
+            $structure_analysis = $this->analyze_page_structure();
+            
+            // 3. 检查技术SEO
+            $technical_seo = $this->analyze_technical_seo();
+        }
         
-        // 4. 内容分析
-        $content_analysis = $this->analyze_content_quality();
+        if ($analysis_scope['content']) {
+            // 4. 内容分析
+            $content_analysis = $this->analyze_content_quality();
+        }
         
-        // 5. 竞争对手分析
-        $competitor_analysis = $this->analyze_competitors();
+        if ($analysis_scope['competitors']) {
+            // 5. 竞争对手分析
+            $competitor_analysis = $this->analyze_competitors($optimization_strategy);
+        }
         
-        // 6. 实时获取SEO知识
-        $seo_knowledge = $this->fetch_latest_seo_knowledge();
+        if ($analysis_scope['search_latest']) {
+            // 6. 实时获取SEO知识
+            $seo_knowledge = $this->fetch_latest_seo_knowledge($optimization_strategy);
+        }
         
         // 7. 使用AI分析并生成建议
-        $ai_suggestions = $this->generate_ai_suggestions($site_info, $structure_analysis, $technical_seo, $content_analysis, $competitor_analysis, $seo_knowledge, $selected_ai_model);
+        $ai_suggestions = $this->generate_ai_suggestions($site_info, $structure_analysis, $technical_seo, $content_analysis, $competitor_analysis, $seo_knowledge, $selected_ai_model, $optimization_strategy);
         
         // 8. 保存分析结果
         $this->save_analysis_results($ai_suggestions, $selected_ai_model);
@@ -238,21 +265,191 @@ class AI_SEO_Analyzer {
     }
     
     /**
-     * 分析竞争对手
+     * 竞争对手分析
      */
-    private function analyze_competitors() {
-        // 这里可以集成第三方API来获取竞争对手数据
-        // 目前返回基本结构
+    private function analyze_competitors($optimization_strategy = 'comprehensive') {
+        // 获取用户配置的竞争对手网站
+        $competitor_urls = get_option('ai_seo_competitor_urls', array());
+        
+        // 如果用户没有配置，根据优化策略提供默认竞争对手
+        if (empty($competitor_urls)) {
+            $site_domain = parse_url(home_url(), PHP_URL_HOST);
+            $site_keywords = $this->extract_site_keywords();
+            
+            // 基于网站关键词和策略推荐竞争对手
+            $competitor_urls = $this->suggest_competitors($site_keywords, $optimization_strategy);
+        }
+        
+        $competitors_data = array();
+        
+        foreach ($competitor_urls as $url) {
+            if (empty($url)) continue;
+            
+            $competitor_data = $this->analyze_competitor_site($url);
+            if ($competitor_data) {
+                $competitors_data[$url] = $competitor_data;
+            }
+        }
+        
         return array(
-            'competitors_found' => 0,
-            'analysis' => '竞争对手分析功能需要配置外部API'
+            'analyzed_competitors' => $competitors_data,
+            'competitive_keywords' => $this->extract_competitor_keywords($competitors_data),
+            'gap_analysis' => $this->perform_gap_analysis($competitors_data),
+            'opportunities' => $this->identify_opportunities($competitors_data)
         );
+    }
+    
+    /**
+     * 分析单个竞争对手网站
+     */
+    private function analyze_competitor_site($url) {
+        $response = wp_remote_get($url, array(
+            'timeout' => 30,
+            'user-agent' => 'AI SEO Analyzer Bot'
+        ));
+        
+        if (is_wp_error($response)) {
+            return false;
+        }
+        
+        $html = wp_remote_retrieve_body($response);
+        if (empty($html)) {
+            return false;
+        }
+        
+        // 解析HTML内容
+        $dom = new DOMDocument();
+        @$dom->loadHTML($html);
+        
+        $title = '';
+        $description = '';
+        $keywords = array();
+        
+        // 提取标题
+        $title_nodes = $dom->getElementsByTagName('title');
+        if ($title_nodes->length > 0) {
+            $title = $title_nodes->item(0)->textContent;
+        }
+        
+        // 提取描述
+        $meta_nodes = $dom->getElementsByTagName('meta');
+        foreach ($meta_nodes as $meta) {
+            if ($meta->getAttribute('name') === 'description') {
+                $description = $meta->getAttribute('content');
+                break;
+            }
+        }
+        
+        // 提取H1标签作为关键词
+        $h1_nodes = $dom->getElementsByTagName('h1');
+        foreach ($h1_nodes as $h1) {
+            $keywords[] = trim($h1->textContent);
+        }
+        
+        return array(
+            'url' => $url,
+            'title' => $title,
+            'description' => $description,
+            'keywords' => array_slice($keywords, 0, 5), // 限制5个关键词
+            'analyzed_at' => current_time('mysql')
+        );
+    }
+    
+    /**
+     * 提取网站关键词
+     */
+    private function extract_site_keywords() {
+        $keywords = array();
+        
+        // 从网站标题和描述提取关键词
+        $site_title = get_bloginfo('name');
+        $site_description = get_bloginfo('description');
+        
+        $text = $site_title . ' ' . $site_description;
+        $words = preg_split('/\s+/', strtolower($text));
+        
+        foreach ($words as $word) {
+            if (strlen($word) > 3) {
+                $keywords[] = $word;
+            }
+        }
+        
+        return array_unique($keywords);
+    }
+    
+    /**
+     * 根据关键词推荐竞争对手
+     */
+    private function suggest_competitors($keywords, $strategy) {
+        // 这里可以根据不同策略返回不同的竞争对手建议
+        $suggestions = array();
+        
+        switch ($strategy) {
+            case 'baidu_focused':
+                $suggestions = array('baidu.com', 'zhihu.com', 'csdn.net');
+                break;
+            case 'google_focused':
+                $suggestions = array('wikipedia.org', 'medium.com', 'github.com');
+                break;
+            default:
+                $suggestions = array('example-competitor1.com', 'example-competitor2.com');
+        }
+        
+        return $suggestions;
+    }
+    
+    /**
+     * 提取竞争对手关键词
+     */
+    private function extract_competitor_keywords($competitors_data) {
+        $all_keywords = array();
+        
+        foreach ($competitors_data as $competitor) {
+            if (isset($competitor['keywords'])) {
+                $all_keywords = array_merge($all_keywords, $competitor['keywords']);
+            }
+        }
+        
+        return array_unique($all_keywords);
+    }
+    
+    /**
+     * 执行差距分析
+     */
+    private function perform_gap_analysis($competitors_data) {
+        $gaps = array();
+        
+        foreach ($competitors_data as $competitor) {
+            if (!empty($competitor['title'])) {
+                $gaps[] = "标题优化机会：参考 " . $competitor['url'] . " 的标题策略";
+            }
+            if (!empty($competitor['description'])) {
+                $gaps[] = "描述优化机会：学习 " . $competitor['url'] . " 的描述写法";
+            }
+        }
+        
+        return $gaps;
+    }
+    
+    /**
+     * 识别优化机会
+     */
+    private function identify_opportunities($competitors_data) {
+        $opportunities = array();
+        
+        if (count($competitors_data) > 0) {
+            $opportunities[] = "内容策略优化：分析竞争对手的内容主题";
+            $opportunities[] = "关键词扩展：发现新的关键词机会";
+            $opportunities[] = "用户体验提升：学习优秀的页面设计";
+        }
+        
+        return $opportunities;
     }
     
     /**
      * 实时获取SEO知识
      */
-    private function fetch_latest_seo_knowledge() {
+    private function fetch_latest_seo_knowledge($optimization_strategy = 'comprehensive') {
         if (!$this->api_key) {
             return array('error' => 'API密钥未配置');
         }
@@ -294,7 +491,7 @@ class AI_SEO_Analyzer {
     /**
      * 使用AI生成优化建议
      */
-    private function generate_ai_suggestions($site_info, $structure_analysis, $technical_seo, $content_analysis, $competitor_analysis, $seo_knowledge, $ai_model) {
+    private function generate_ai_suggestions($site_info, $structure_analysis, $technical_seo, $content_analysis, $competitor_analysis, $seo_knowledge, $ai_model, $optimization_strategy = 'comprehensive') {
         if (!$this->api_key) {
             return array('error' => 'API密钥未配置');
         }
