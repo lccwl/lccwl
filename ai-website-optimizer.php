@@ -34,8 +34,21 @@ class AI_Website_Optimizer {
     }
     
     private function __construct() {
+        // 确保WordPress已完全加载
+        if (!function_exists('wp_get_current_user')) {
+            add_action('wp_loaded', array($this, 'delayed_init'));
+            return;
+        }
+        
+        $this->delayed_init();
+    }
+    
+    public function delayed_init() {
         // 加载依赖文件
-        $this->load_dependencies();
+        if (!$this->load_dependencies()) {
+            add_action('admin_notices', array($this, 'show_dependency_error'));
+            return;
+        }
         
         // 激活/停用钩子
         register_activation_hook(__FILE__, array($this, 'activate'));
@@ -70,29 +83,47 @@ class AI_Website_Optimizer {
     }
     
     private function load_dependencies() {
-        // 加载工具类
-        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-utils.php')) {
-            require_once AI_OPT_PLUGIN_PATH . 'includes/class-utils.php';
+        // 核心文件列表
+        $required_files = array(
+            'includes/class-utils.php' => 'AI_Optimizer_Utils',
+            'includes/class-seo-analyzer.php' => 'AI_SEO_Analyzer',
+            'includes/class-ai-patrol-system.php' => 'AI_Patrol_System',
+            'includes/class-api-handler.php' => 'AI_API_Handler',
+            'includes/class-database.php' => 'AI_Optimizer_Database'
+        );
+        
+        foreach ($required_files as $file => $class_name) {
+            $file_path = AI_OPT_PLUGIN_PATH . $file;
+            
+            if (file_exists($file_path)) {
+                try {
+                    require_once $file_path;
+                    
+                    // 验证类是否成功加载
+                    if (!class_exists($class_name)) {
+                        error_log("AI Optimizer: Class {$class_name} not found after loading {$file}");
+                    }
+                    
+                } catch (Error $e) {
+                    error_log("AI Optimizer: Fatal error loading {$file}: " . $e->getMessage());
+                    return false;
+                } catch (Exception $e) {
+                    error_log("AI Optimizer: Exception loading {$file}: " . $e->getMessage());
+                    return false;
+                }
+            } else {
+                error_log("AI Optimizer: Required file not found: {$file_path}");
+            }
         }
         
-        // 加载SEO分析器
-        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-seo-analyzer.php')) {
-            require_once AI_OPT_PLUGIN_PATH . 'includes/class-seo-analyzer.php';
-        }
-        
-        // 加载AI巡逻系统
-        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-ai-patrol-system.php')) {
-            require_once AI_OPT_PLUGIN_PATH . 'includes/class-ai-patrol-system.php';
-        }
-        
-        // 加载其他必要的类
-        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-api-handler.php')) {
-            require_once AI_OPT_PLUGIN_PATH . 'includes/class-api-handler.php';
-        }
-        
-        if (file_exists(AI_OPT_PLUGIN_PATH . 'includes/class-database.php')) {
-            require_once AI_OPT_PLUGIN_PATH . 'includes/class-database.php';
-        }
+        return true;
+    }
+    
+    /**
+     * 显示依赖错误通知
+     */
+    public function show_dependency_error() {
+        echo '<div class="notice notice-error"><p><strong>AI智能网站优化器：</strong>插件依赖文件加载失败，请检查插件文件完整性或联系技术支持。</p></div>';
     }
     
     public function init() {
@@ -2422,53 +2453,6 @@ class AI_Website_Optimizer {
         ");
         
         return $result ? $result->size : 0;
-            );
-        }
-        
-        if (in_array('plugin', $types) && $rand > 5) {
-            $logs[] = array(
-                'type' => 'info',
-                'message' => '插件活动',
-                'details' => 'AI优化器自动执行了内容优化任务'
-            );
-        }
-        
-        if (in_array('user', $types) && $rand > 6) {
-            $logs[] = array(
-                'type' => 'info',
-                'message' => '用户活动',
-                'details' => '管理员正在访问: ' . admin_url()
-            );
-        }
-        
-        if (in_array('security', $types) && $rand > 9) {
-            $logs[] = array(
-                'type' => 'warning',
-                'message' => '安全警告',
-                'details' => '检测到多次失败的登录尝试'
-            );
-        }
-        
-        // 从数据库获取真实日志（如果有的话）
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'ai_optimizer_logs';
-        
-        if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") == $table_name) {
-            $recent_logs = $wpdb->get_results(
-                "SELECT type, message, data FROM $table_name 
-                ORDER BY created_at DESC LIMIT 5"
-            );
-            
-            foreach ($recent_logs as $log) {
-                $logs[] = array(
-                    'type' => $log->type,
-                    'message' => $log->message,
-                    'details' => $log->data
-                );
-            }
-        }
-        
-        wp_send_json_success(array('logs' => $logs));
     }
     
     // 授权管理AJAX处理
@@ -2646,18 +2630,28 @@ class AI_Website_Optimizer {
             return;
         }
         
-        $seo_analyzer = new AI_SEO_Analyzer();
-        $results = $seo_analyzer->analyze_website_seo($ai_model, $optimization_strategy, $analysis_scope);
+        // 检查类是否存在
+        if (!class_exists('AI_SEO_Analyzer')) {
+            wp_send_json_error(array('message' => 'SEO分析器类未加载，请重新激活插件'));
+            return;
+        }
         
-        if (isset($results['error'])) {
-            wp_send_json_error(array('message' => $results['error']));
-        } else {
-            wp_send_json_success(array(
-                'message' => 'SEO分析完成',
-                'suggestions' => $results['suggestions'],
-                'model_used' => $results['model_used'],
-                'analysis_data' => $results['analysis_data']
-            ));
+        try {
+            $seo_analyzer = new AI_SEO_Analyzer();
+            $results = $seo_analyzer->analyze_website_seo($ai_model, $optimization_strategy, $analysis_scope);
+            
+            if (isset($results['error'])) {
+                wp_send_json_error(array('message' => $results['error']));
+            } else {
+                wp_send_json_success(array(
+                    'message' => 'SEO分析完成',
+                    'suggestions' => $results['suggestions'],
+                    'model_used' => $results['model_used'],
+                    'analysis_data' => $results['analysis_data']
+                ));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => 'SEO分析过程中发生错误: ' . $e->getMessage()));
         }
     }
     
@@ -2692,16 +2686,26 @@ class AI_Website_Optimizer {
             wp_die('Unauthorized');
         }
         
-        $patrol_system = new AI_Patrol_System();
-        $results = $patrol_system->run_automated_patrol();
+        // 检查类是否存在
+        if (!class_exists('AI_Patrol_System')) {
+            wp_send_json_error(array('message' => '巡逻系统类未加载，请重新激活插件'));
+            return;
+        }
         
-        if (!$results) {
-            wp_send_json_error(array('message' => '巡逻系统未启用或API密钥未配置'));
-        } else {
-            wp_send_json_success(array(
-                'message' => 'AI巡逻检查完成',
-                'results' => $results
-            ));
+        try {
+            $patrol_system = new AI_Patrol_System();
+            $results = $patrol_system->run_automated_patrol();
+            
+            if (!$results) {
+                wp_send_json_error(array('message' => '巡逻系统未启用或API密钥未配置'));
+            } else {
+                wp_send_json_success(array(
+                    'message' => 'AI巡逻检查完成',
+                    'results' => $results
+                ));
+            }
+        } catch (Exception $e) {
+            wp_send_json_error(array('message' => '巡逻检查过程中发生错误: ' . $e->getMessage()));
         }
     }
     
@@ -2778,7 +2782,101 @@ class AI_Website_Optimizer {
     }
 }
 
-// 启动插件
-add_action('plugins_loaded', function() {
-    AI_Website_Optimizer::get_instance();
+// 插件激活钩子
+register_activation_hook(__FILE__, 'ai_optimizer_activate_plugin');
+
+function ai_optimizer_activate_plugin() {
+    // 检查WordPress版本
+    if (version_compare(get_bloginfo('version'), '5.0', '<')) {
+        deactivate_plugins(basename(__FILE__));
+        wp_die('此插件需要WordPress 5.0或更高版本。');
+    }
+    
+    // 检查PHP版本
+    if (version_compare(PHP_VERSION, '7.4.0', '<')) {
+        deactivate_plugins(basename(__FILE__));
+        wp_die('此插件需要PHP 7.4.0或更高版本。');
+    }
+    
+    // 创建数据库表
+    ai_optimizer_create_tables();
+}
+
+// 插件停用钩子
+register_deactivation_hook(__FILE__, 'ai_optimizer_deactivate_plugin');
+
+function ai_optimizer_deactivate_plugin() {
+    // 清理定时任务
+    wp_clear_scheduled_hook('ai_optimizer_daily_patrol');
+}
+
+// 创建数据库表
+function ai_optimizer_create_tables() {
+    global $wpdb;
+    
+    $charset_collate = $wpdb->get_charset_collate();
+    
+    // SEO分析结果表
+    $table_name = $wpdb->prefix . 'ai_seo_analysis';
+    $sql = "CREATE TABLE $table_name (
+        id mediumint(9) NOT NULL AUTO_INCREMENT,
+        url varchar(255) NOT NULL,
+        analysis_type varchar(50) NOT NULL,
+        score int(3) NOT NULL,
+        issues text,
+        suggestions text,
+        ai_model varchar(100) NOT NULL,
+        analyzed_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY url (url),
+        KEY analyzed_at (analyzed_at)
+    ) $charset_collate;";
+    
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta($sql);
+    
+    // 巡逻日志表
+    $log_table = $wpdb->prefix . 'ai_patrol_logs';
+    $log_sql = "CREATE TABLE $log_table (
+        id mediumint(9) NOT NULL AUTO_INCREMENT,
+        patrol_type varchar(50) NOT NULL,
+        status varchar(20) NOT NULL,
+        issues_found int(5) DEFAULT 0,
+        auto_fixes_applied int(5) DEFAULT 0,
+        execution_time float DEFAULT 0,
+        details text,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY patrol_type (patrol_type),
+        KEY created_at (created_at)
+    ) $charset_collate;";
+    
+    dbDelta($log_sql);
+    
+    // 设置默认选项
+    add_option('ai_opt_api_key', '');
+    add_option('ai_seo_competitor_urls', array());
+    add_option('ai_patrol_settings', array(
+        'enabled' => true,
+        'monitor_database' => true,
+        'monitor_code' => true,
+        'monitor_performance' => true,
+        'monitor_security' => true,
+        'auto_fix' => false
+    ));
+}
+
+// 启动插件 - 延迟到init钩子以确保WordPress完全加载
+add_action('init', function() {
+    // 检查是否在管理员面板
+    if (is_admin()) {
+        AI_Website_Optimizer::get_instance();
+    }
+});
+
+// 前端初始化（如果需要）
+add_action('wp', function() {
+    if (!is_admin()) {
+        // 前端功能初始化
+    }
 });
